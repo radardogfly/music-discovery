@@ -29,6 +29,7 @@ export default {
     const url = new URL(request.url);
     try {
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true }, 200, cors);
+      if (request.method === "GET" && url.pathname === "/diag") return json(await diag(env), 200, cors);
       if (request.method === "GET" && url.pathname === "/history") return json(await getHistory(env), 200, cors);
       if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/feedback") return json(await saveFeedback(await request.json(), env), 200, cors);
@@ -62,6 +63,25 @@ function json(body, status = 200, headers = {}) {
 }
 function bad(msg) { const e = new Error(msg); e.status = 400; return e; }
 const str = (v, max = 200) => (typeof v === "string" ? v.slice(0, max) : "");
+
+/* ------------------------------------------------------------------
+   /diag: configuration and upstream check, no user data involved
+   ------------------------------------------------------------------ */
+async function diag(env) {
+  const out = { hasKey: !!env.ANTHROPIC_API_KEY, hasDb: !!env.DB, model: env.CLAUDE_MODEL || "claude-sonnet-5-5", allowedOrigin: env.ALLOWED_ORIGIN || null };
+  try { const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM feedback").first(); out.db = "ok, feedback rows: " + r.n; } catch (e) { out.db = "error: " + e.message; }
+  if (env.ANTHROPIC_API_KEY) {
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: out.model, max_tokens: 5, messages: [{ role: "user", content: "Say ok." }] }),
+      });
+      out.claude = r.ok ? "ok" : `error ${r.status}: ${(await r.text()).slice(0, 300)}`;
+    } catch (e) { out.claude = "fetch failed: " + e.message; }
+  }
+  return out;
+}
 
 /* ------------------------------------------------------------------
    /feedback
