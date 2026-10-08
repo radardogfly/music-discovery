@@ -31,3 +31,10 @@ CREATE INDEX IF NOT EXISTS idx_feedback_artist      ON feedback(artist_name);
 CREATE INDEX IF NOT EXISTS idx_tags_tag             ON feedback_tags(tag);
 CREATE INDEX IF NOT EXISTS idx_log_artist           ON recommendation_log(artist_name);
 CREATE INDEX IF NOT EXISTS idx_log_shown            ON recommendation_log(shown_at);
+
+-- Shelf support (added after initial deploy; already applied to the live database)
+-- ALTER TABLE recommendation_log ADD COLUMN status TEXT NOT NULL DEFAULT 'active';   -- active | rated | dismissed
+-- ALTER TABLE recommendation_log ADD COLUMN image_url TEXT;
+-- ALTER TABLE recommendation_log ADD COLUMN spotify_url TEXT;
+-- ALTER TABLE recommendation_log ADD COLUMN genres TEXT;
+CREATE INDEX IF NOT EXISTS idx_log_status ON recommendation_log(status);

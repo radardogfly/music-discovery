@@ -223,6 +223,7 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 }
 @keyframes rise { to { opacity: 1; transform: none; } }
 .card.rated { opacity: 0.6; }
+.card.leaving { opacity: 0; transform: translateY(8px); transition: opacity 500ms var(--ease), transform 500ms var(--ease); animation: none; }
 .card .photo { width: 100%; cursor: pointer; }
 .card .photo.r34 { aspect-ratio: 3 / 4; }
 .card .photo.r11 { aspect-ratio: 1 / 1; }
@@ -371,7 +372,7 @@ html { -webkit-tap-highlight-color: transparent; }
     <div class="container section">
       <div class="section-head">
         <h2>Discover</h2>
-        <button class="textbtn" id="refresh">Another twelve</button>
+        <button class="textbtn" id="refresh">Replace all</button>
       </div>
       <div id="grid" class="masonry"></div>
       <div id="empty" class="hidden"><p class="muted">Nothing yet.</p></div>
@@ -665,43 +666,77 @@ const Api = {
     if (!r.ok) throw new Error(`API ${r.status} on ${path}`);
     return r.json();
   },
-  recommend: p => Api.post("/recommend", { profile: p, count: 16 }),
+  recommend: (p, count) => Api.post("/recommend", { profile: p, count }),
   feedback: f => Api.post("/feedback", f),
   logShown: items => Api.post("/shown", { items }),
   history: () => Api.get("/history"),
+  shelf: () => Api.get("/shelf"),
+  clearShelf: () => Api.post("/shelf/clear", {}),
 };
 
 /* ==================================================================
    DISCOVER
    ================================================================== */
-async function loadRecommendations() {
+/* The shelf: a persistent set of BATCH unrated artists. On open it is loaded from the
+   Worker as-is. Only empty slots are filled, one Claude call for however many are missing.
+   A verdict frees one slot, which is refilled with a single new artist. */
+async function loadShelf() {
   setLoading(true, "Listening.");
   try {
-    const { candidates } = await Api.recommend(state.profile);
-    const rejected = new Set(state.history.filter(h => h.verdict === "down").map(h => h.artist_name.toLowerCase()));
-    const libNames = new Set(state.profile.libraryArtistNames.map(n => n.toLowerCase()));
-    const seen = new Set();
-    const resolved = [];
-    for (const c of candidates) {
-      if (resolved.length >= CONFIG.BATCH) break;
-      const key = c.name.toLowerCase();
-      if (seen.has(key) || rejected.has(key) || libNames.has(key)) continue;
-      seen.add(key);
-      let a = null;
-      try { a = await Spotify.searchArtist(c.name); } catch { a = null; }
-      if (!a || state.profile.libraryArtistIds.includes(a.id)) continue;
-      resolved.push({
-        name: a.name, spotify_id: a.id, url: a.external_urls?.spotify, image: a.images?.[0]?.url || "",
-        genres: (a.genres || []).slice(0, 3), reason: c.reason, mood: MOODS.includes(c.mood) ? c.mood : "serene",
-        verdict: null, tags: [],
-      });
-    }
-    state.recs = resolved;
-    Api.logShown(resolved.map(r => ({ artist_name: r.name, spotify_id: r.spotify_id, reason: r.reason, mood: r.mood }))).catch(() => {});
+    const { items } = await Api.shelf();
+    state.recs = items.map(r => ({ ...r, verdict: null, tags: [] }));
     renderDiscover();
+    await topUpShelf();
   } catch (e) {
     console.error(e); notice("Recommendation error: " + (e && e.message ? e.message : "unknown"), 15000);
-    state.recs = []; renderDiscover();
+    renderDiscover();
+  } finally { setLoading(false); }
+}
+
+async function topUpShelf() {
+  const need = CONFIG.BATCH - state.recs.filter(r => !r.verdict).length;
+  if (need <= 0) return;
+  const fresh = await fetchNew(need);
+  if (!fresh.length) return;
+  state.recs = [...state.recs.filter(r => !r.verdict), ...fresh];
+  Api.logShown(fresh.map(r => ({ artist_name: r.name, spotify_id: r.spotify_id, reason: r.reason, mood: r.mood, image_url: r.image, spotify_url: r.url, genres: r.genres }))).catch(() => {});
+  renderDiscover();
+}
+
+async function fetchNew(need) {
+  const { candidates } = await Api.recommend(state.profile, Math.max(8, need + 4));
+  const rejected = new Set(state.history.filter(h => h.verdict === "down").map(h => h.artist_name.toLowerCase()));
+  const libNames = new Set(state.profile.libraryArtistNames.map(n => n.toLowerCase()));
+  const onShelf = new Set(state.recs.map(r => r.name.toLowerCase()));
+  const seen = new Set();
+  const resolved = [];
+  for (const c of candidates) {
+    if (resolved.length >= need) break;
+    const key = c.name.toLowerCase();
+    if (seen.has(key) || rejected.has(key) || libNames.has(key) || onShelf.has(key)) continue;
+    seen.add(key);
+    let a = null;
+    try { a = await Spotify.searchArtist(c.name); } catch { a = null; }
+    if (!a || state.profile.libraryArtistIds.includes(a.id)) continue;
+    if (onShelf.has(a.name.toLowerCase())) continue;
+    resolved.push({
+      name: a.name, spotify_id: a.id, url: a.external_urls?.spotify || "", image: a.images?.[0]?.url || "",
+      genres: (a.genres || []).slice(0, 3), reason: c.reason, mood: MOODS.includes(c.mood) ? c.mood : "serene",
+      verdict: null, tags: [],
+    });
+  }
+  return resolved;
+}
+
+async function replaceAll() {
+  setLoading(true, "Listening.");
+  try {
+    await Api.clearShelf();
+    state.recs = [];
+    renderDiscover();
+    await topUpShelf();
+  } catch (e) {
+    console.error(e); notice("Recommendation error: " + (e && e.message ? e.message : "unknown"), 15000);
   } finally { setLoading(false); }
 }
 
@@ -772,6 +807,14 @@ async function commitFeedback(el, r) {
     await Api.feedback({ artist_name: r.name, spotify_id: r.spotify_id, verdict: r.verdict, mood: r.mood, genres: r.genres, tags: r.tags });
     state.history.unshift({ artist_name: r.name, verdict: r.verdict, tags: r.tags, mood: r.mood, created_at: new Date().toISOString() });
     renderHistory();
+    // the rated card leaves the shelf after a beat and one new artist takes a slot
+    setTimeout(async () => {
+      el.classList.add("leaving");
+      await new Promise(res => setTimeout(res, 500));
+      state.recs = state.recs.filter(x => x !== r);
+      renderDiscover();
+      try { await topUpShelf(); } catch (e) { console.error(e); notice("Could not fetch a replacement."); }
+    }, 900);
   } catch { notice("Could not save that verdict."); }
 }
 
@@ -841,7 +884,7 @@ function updateNav() {
 }
 window.addEventListener("scroll", updateNav, { passive: true });
 $$("nav li button[data-view]").forEach(b => b.addEventListener("click", () => switchView(b.dataset.view)));
-$("#refresh").addEventListener("click", loadRecommendations);
+$("#refresh").addEventListener("click", replaceAll);
 $("#connect").addEventListener("click", e => { e.preventDefault(); Auth.login(); });
 $("#signout").addEventListener("click", () => { Auth.clear(); location.reload(); });
 $$("#filters button").forEach(b => b.addEventListener("click", () => {
@@ -858,7 +901,7 @@ async function boot() {
     show($("#app"), true); show($("#nav"), true);
     renderProfile(); renderTrends();
     await loadHistory();
-    await loadRecommendations();
+    await loadShelf();
     updateNav();
   } catch (e) {
     console.error(e); setLoading(false);

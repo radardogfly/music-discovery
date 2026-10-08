@@ -38,6 +38,8 @@ export default {
         catch (e) { return json({ ok: false, status: e.status || 500, error: e.message }, 200, cors); }
       }
       if (request.method === "GET" && url.pathname === "/history") return json(await getHistory(env), 200, cors);
+      if (request.method === "GET" && url.pathname === "/shelf") return json(await getShelf(env), 200, cors);
+      if (request.method === "POST" && url.pathname === "/shelf/clear") return json(await clearShelf(env), 200, cors);
       if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/feedback") return json(await saveFeedback(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/shown") return json(await logShown(await request.json(), env), 200, cors);
@@ -110,6 +112,7 @@ async function saveFeedback(body, env) {
     const stmt = env.DB.prepare("INSERT OR IGNORE INTO feedback_tags (feedback_id, tag) VALUES (?, ?)");
     await env.DB.batch(tags.map(t => stmt.bind(id, t)));
   }
+  await env.DB.prepare("UPDATE recommendation_log SET status = 'rated' WHERE status = 'active' AND lower(artist_name) = lower(?)").bind(artist_name).run();
   return { ok: true, id };
 }
 
@@ -119,12 +122,31 @@ async function saveFeedback(body, env) {
 async function logShown(body, env) {
   const items = Array.isArray(body.items) ? body.items.slice(0, 24) : [];
   if (!items.length) return { ok: true, logged: 0 };
-  const stmt = env.DB.prepare("INSERT INTO recommendation_log (artist_name, spotify_id, reason, mood) VALUES (?, ?, ?, ?)");
+  const stmt = env.DB.prepare("INSERT INTO recommendation_log (artist_name, spotify_id, reason, mood, status, image_url, spotify_url, genres) VALUES (?, ?, ?, ?, 'active', ?, ?, ?)");
   await env.DB.batch(items.filter(i => str(i.artist_name)).map(i =>
-    stmt.bind(str(i.artist_name), str(i.spotify_id, 64) || null, str(i.reason, 400) || null, MOODS.includes(i.mood) ? i.mood : null)
+    stmt.bind(str(i.artist_name), str(i.spotify_id, 64) || null, str(i.reason, 400) || null, MOODS.includes(i.mood) ? i.mood : null,
+      str(i.image_url, 500) || null, str(i.spotify_url, 200) || null, JSON.stringify(Array.isArray(i.genres) ? i.genres.slice(0, 3).map(g => str(g, 60)) : []))
   ));
   return { ok: true, logged: items.length };
 }
+
+/* ------------------------------------------------------------------
+   /shelf: the persistent set of unrated recommendations
+   ------------------------------------------------------------------ */
+async function getShelf(env) {
+  const { results } = await env.DB.prepare(`
+    SELECT id, artist_name, spotify_id, reason, mood, image_url, spotify_url, genres, shown_at
+    FROM recommendation_log WHERE status = 'active' ORDER BY id ASC LIMIT 24`).all();
+  return { items: results.map(r => ({
+    name: r.artist_name, spotify_id: r.spotify_id, reason: r.reason, mood: r.mood,
+    image: r.image_url || "", url: r.spotify_url || "", genres: safeJson(r.genres, []), shown_at: r.shown_at,
+  })) };
+}
+async function clearShelf(env) {
+  const r = await env.DB.prepare("UPDATE recommendation_log SET status = 'dismissed' WHERE status = 'active'").run();
+  return { ok: true, dismissed: r.meta.changes };
+}
+function safeJson(v, d) { try { const x = JSON.parse(v); return x ?? d; } catch { return d; } }
 
 /* ------------------------------------------------------------------
    /history
