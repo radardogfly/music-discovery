@@ -30,6 +30,13 @@ export default {
     try {
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true }, 200, cors);
       if (request.method === "GET" && url.pathname === "/diag") return json(await diag(env), 200, cors);
+      if (request.method === "GET" && url.pathname === "/diag/recommend") {
+        const sample = { topGenres: [{ genre: "indie folk", weight: 1 }, { genre: "ambient", weight: 0.6 }, { genre: "jazz", weight: 0.4 }],
+          anchorArtists: ["Bon Iver", "Nils Frahm", "Alice Coltrane"], eraDistribution: { "2010s": 0.6, "1970s": 0.4 },
+          libraryArtistIds: [], libraryArtistNames: ["Bon Iver", "Nils Frahm", "Alice Coltrane"], trendSignal: {} };
+        try { const r = await recommend({ profile: sample, count: 8 }, env); return json({ ok: true, returned: r.candidates.length, sample: r.candidates.slice(0, 3) }, 200, cors); }
+        catch (e) { return json({ ok: false, status: e.status || 500, error: e.message }, 200, cors); }
+      }
       if (request.method === "GET" && url.pathname === "/history") return json(await getHistory(env), 200, cors);
       if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/feedback") return json(await saveFeedback(await request.json(), env), 200, cors);

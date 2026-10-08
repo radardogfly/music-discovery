@@ -657,7 +657,7 @@ function buildProfile() {
 const Api = {
   async post(path, body) {
     const r = await fetch(CONFIG.API_BASE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error(`API ${r.status} on ${path}`);
+    if (!r.ok) throw new Error(`API ${r.status} on ${path}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
     return r.json();
   },
   async get(path) {
@@ -700,7 +700,7 @@ async function loadRecommendations() {
     Api.logShown(resolved.map(r => ({ artist_name: r.name, spotify_id: r.spotify_id, reason: r.reason, mood: r.mood }))).catch(() => {});
     renderDiscover();
   } catch (e) {
-    console.error(e); notice("Could not reach the recommendation service.");
+    console.error(e); notice("Recommendation error: " + (e && e.message ? e.message : "unknown"), 15000);
     state.recs = []; renderDiscover();
   } finally { setLoading(false); }
 }
