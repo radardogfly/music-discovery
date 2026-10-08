@@ -485,7 +485,7 @@ const Auth = {
     const r = await fetch("https://accounts.spotify.com/api/token", {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
     });
-    if (!r.ok) throw new Error("Token exchange failed");
+    if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error(`Token exchange failed (${r.status}): ${t.slice(0, 160)}`); }
     Auth.save(await r.json());
     history.replaceState({}, "", CONFIG.REDIRECT_URI);
     return true;
@@ -844,7 +844,7 @@ async function boot() {
     updateNav();
   } catch (e) {
     console.error(e); setLoading(false);
-    notice("Something went wrong talking to Spotify. Try signing in again.");
+    notice("Spotify error: " + (e && e.message ? e.message : "unknown") + ". Try signing in again.", 12000);
     Auth.clear(); show($("#login"), true);
   }
 }
