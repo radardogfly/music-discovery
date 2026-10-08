@@ -1,0 +1,15 @@
+name = "music-discovery"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "music-discovery-db"
+database_id = "ec5a29ee-7ae1-49a8-b700-05349f8efd11"
+
+[vars]
+ALLOWED_ORIGIN = "https://radardogfly.github.io"
+CLAUDE_MODEL = "claude-sonnet-5-5"
+
+# Secrets (set with: npx wrangler secret put <NAME>)
+#   ANTHROPIC_API_KEY   the Claude API key; never commit it
