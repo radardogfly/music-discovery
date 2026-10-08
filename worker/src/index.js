@@ -271,7 +271,8 @@ async function askClaude(prompt, count, env) {
       model: env.CLAUDE_MODEL || "claude-sonnet-5-5",
       max_tokens: 4000,
       tools: [tool],
-      tool_choice: { type: "tool", name: "recommend_artists" },
+      tool_choice: { type: "auto" },
+      system: "You must respond by calling the recommend_artists tool exactly once with the full list. Do not answer in prose.",
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -281,7 +282,13 @@ async function askClaude(prompt, count, env) {
   }
   const data = await r.json();
   const block = (data.content || []).find(b => b.type === "tool_use" && b.name === "recommend_artists");
-  const artists = block?.input?.artists;
+  let artists = block?.input?.artists;
+  if (!Array.isArray(artists)) {
+    // Fallback: the model answered in text; pull the first JSON object or array out of it
+    const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+    const m = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+    try { const parsed = m ? JSON.parse(m[0]) : null; artists = Array.isArray(parsed) ? parsed : parsed?.artists; } catch { artists = null; }
+  }
   if (!Array.isArray(artists)) { const e = new Error("Claude returned no structured output"); e.status = 502; throw e; }
   return artists.map(a => ({ name: str(a.name, 120).trim(), reason: str(a.reason, 400).trim(), mood: a.mood, confidence: Number(a.confidence) }))
                 .filter(a => a.name);
