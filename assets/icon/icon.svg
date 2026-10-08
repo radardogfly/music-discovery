@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    Music Discovery app icon.
+    A record seen close and off-centre: one wide groove field of thin cream rings on warm
+    near-black, a small spindle disc, a warm light leak in one corner, and a film-grain veil.
+    No text. Designed for the iOS rounded-square mask, so nothing important sits near the corners.
+  -->
+  <defs>
+    <radialGradient id="paper" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#F7F3EA"/>
+      <stop offset="1" stop-color="#E8E1D3"/>
+    </radialGradient>
+    <linearGradient id="leak" x1="1" y1="0" x2="0.35" y2="0.65">
+      <stop offset="0" stop-color="#D9A441" stop-opacity="0.32"/>
+      <stop offset="0.55" stop-color="#D9A441" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.72">
+      <stop offset="0.55" stop-color="#000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000" stop-opacity="0.35"/>
+    </radialGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="3" stitchTiles="stitch" seed="7"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0.16 0"/>
+    </filter>
+    <clipPath id="square"><rect width="1024" height="1024"/></clipPath>
+  </defs>
+
+  <!-- ground -->
+  <rect width="1024" height="1024" fill="#1A1816"/>
+  <rect width="1024" height="1024" fill="#221E1B" opacity="0.6"/>
+
+  <g clip-path="url(#square)">
+    <!-- grooves: concentric rings, centre pushed to lower right so the disc reads as a crop -->
+    <g fill="none" stroke="#EDE8DF" stroke-linecap="round">
+      <circle cx="700" cy="690" r="170" stroke-width="3" opacity="1"/>
+      <circle cx="700" cy="690" r="206" stroke-width="2.2" opacity="1"/>
+      <circle cx="700" cy="690" r="240" stroke-width="2.2" opacity="0.94"/>
+      <circle cx="700" cy="690" r="272" stroke-width="2" opacity="0.84"/>
+      <circle cx="700" cy="690" r="302" stroke-width="2" opacity="0.74"/>
+      <circle cx="700" cy="690" r="330" stroke-width="1.8" opacity="0.65"/>
+      <circle cx="700" cy="690" r="356" stroke-width="1.8" opacity="0.57"/>
+      <circle cx="700" cy="690" r="380" stroke-width="1.6" opacity="0.49"/>
+      <circle cx="700" cy="690" r="402" stroke-width="1.6" opacity="0.42"/>
+      <circle cx="700" cy="690" r="422" stroke-width="1.5" opacity="0.35"/>
+      <circle cx="700" cy="690" r="440" stroke-width="1.5" opacity="0.3"/>
+      <circle cx="700" cy="690" r="456" stroke-width="1.4" opacity="0.24"/>
+      <circle cx="700" cy="690" r="470" stroke-width="1.4" opacity="0.2"/>
+      <circle cx="700" cy="690" r="482" stroke-width="1.3" opacity="0.16"/>
+      <circle cx="700" cy="690" r="492" stroke-width="1.3" opacity="0.14"/>
+      <circle cx="700" cy="690" r="500" stroke-width="1.2" opacity="0.11"/>
+    </g>
+
+    <!-- the single bright highlight arc a lamp leaves on vinyl -->
+    <path d="M 540 530 A 226 226 0 0 1 760 468" fill="none" stroke="#F7F3EA" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+
+    <!-- label disc and spindle -->
+    <circle cx="700" cy="690" r="128" fill="url(#paper)"/>
+    <circle cx="700" cy="690" r="128" fill="none" stroke="#1A1816" stroke-width="2" opacity="0.25"/>
+    <circle cx="700" cy="690" r="9" fill="#1A1816"/>
+
+    <!-- light leak, top right -->
+    <rect width="1024" height="1024" fill="url(#leak)"/>
+    <!-- vignette -->
+    <rect width="1024" height="1024" fill="url(#vignette)"/>
+    <!-- grain -->
+    <rect width="1024" height="1024" filter="url(#grain)" style="mix-blend-mode: overlay"/>
+  </g>
+</svg>

@@ -2,9 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Resonance</title>
 <meta name="description" content="Film-grain music discovery from your own Spotify listening.">
+<meta name="application-name" content="Music Discovery">
+<meta name="apple-mobile-web-app-title" content="Music Discovery">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#F4F1EB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121110" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/svg+xml" href="assets/icon/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icon/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/icon/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
@@ -32,6 +43,8 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --gutter: 24px;
   --margin: 48px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -148,8 +161,8 @@ p { margin: 0; max-width: 62ch; }
    ------------------------------------------------------------------ */
 nav {
   position: fixed; top: 0; left: 0; right: 0; z-index: 50;
-  height: 64px; display: flex; align-items: center; justify-content: space-between;
-  padding: 0 var(--margin);
+  height: calc(64px + var(--safe-top)); display: flex; align-items: center; justify-content: space-between;
+  padding: var(--safe-top) var(--margin) 0;
   transition: background 400ms var(--ease), backdrop-filter 400ms var(--ease);
 }
 nav.solid { background: var(--surface); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
@@ -175,7 +188,7 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 .screen .link { display: inline-block; margin-top: 28px; border-bottom: 1px solid currentColor; padding-bottom: 2px; font-size: 15px; }
 
 .hero { height: 100vh; height: 100svh; display: grid; align-content: end; color: #F4F1EB; }
-.hero .copy { position: relative; z-index: 5; padding: 0 var(--margin) 88px; }
+.hero .copy { position: relative; z-index: 5; padding: 0 var(--margin) calc(88px + var(--safe-bottom)); }
 .hero h1 { font-size: clamp(48px, 8vw, 88px); }
 .hero p { margin-top: 14px; opacity: 0.85; }
 .hero .scroll { position: absolute; left: 50%; bottom: 28px; width: 1px; height: 40px; background: currentColor; opacity: 0.6; z-index: 5; animation: scroll 2.4s var(--ease) infinite; transform-origin: top; }
@@ -294,10 +307,15 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 /* ------------------------------------------------------------------
    11. Footer and notices
    ------------------------------------------------------------------ */
-footer { padding: 48px var(--margin); color: var(--ink-muted); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.notice { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--ink); color: var(--paper); padding: 12px 18px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity 400ms var(--ease); max-width: calc(100vw - 32px); }
+footer { padding: 48px var(--margin) calc(48px + var(--safe-bottom)); color: var(--ink-muted); font-size: 12px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.notice { position: fixed; bottom: calc(24px + var(--safe-bottom)); left: 50%; transform: translateX(-50%); z-index: 60; background: var(--ink); color: var(--paper); padding: 12px 18px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity 400ms var(--ease); max-width: calc(100vw - 32px); }
 .notice.show { opacity: 1; }
 
+@media (hover: none) {
+  .card .reason { opacity: 0.9; }
+  .card .photo:hover img { transform: none; }
+}
+html { -webkit-tap-highlight-color: transparent; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition-property: opacity !important; transform: none !important; }
   .card { opacity: 1; }
