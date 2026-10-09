@@ -39,6 +39,9 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/history") return json(await getHistory(env), 200, cors);
       if (request.method === "GET" && url.pathname === "/shelf") return json(await getShelf(env), 200, cors);
+      if (request.method === "POST" && url.pathname === "/plays") return json(await savePlays(await request.json(), env), 200, cors);
+      if (request.method === "GET" && url.pathname === "/plays") return json(await getPlays(url, env), 200, cors);
+      if (request.method === "POST" && url.pathname === "/genres") return json(await getGenres(await request.json(), env), 200, cors);
       if (request.method === "GET" && url.pathname === "/photo") return json(await getPhoto(url.searchParams.get("slot") || "serene", env), 200, cors);
       if (request.method === "POST" && url.pathname === "/shelf/clear") return json(await clearShelf(env), 200, cors);
       if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
@@ -168,6 +171,97 @@ async function getPhoto(slot, env) {
     photographerUrl: (d.user?.links?.html || "https://unsplash.com") + utm,
     photoUrl: (d.links?.html || "https://unsplash.com") + utm,
   };
+}
+
+/* ------------------------------------------------------------------
+   /plays: the listening diary. Spotify only exposes the last 50 plays,
+   so every open copies them here; played_at is the key, duplicates ignored.
+   ------------------------------------------------------------------ */
+async function savePlays(body, env) {
+  const items = Array.isArray(body.items) ? body.items.slice(0, 50) : [];
+  const valid = items.filter(i => str(i.played_at, 40) && str(i.track_name));
+  if (!valid.length) return { ok: true, added: 0 };
+  const stmt = env.DB.prepare(`INSERT OR IGNORE INTO plays
+    (played_at, track_id, track_name, artist_id, artist_name, album_name, release_date, duration_ms, image_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const res = await env.DB.batch(valid.map(i => stmt.bind(
+    str(i.played_at, 40), str(i.track_id, 64) || null, str(i.track_name), str(i.artist_id, 64) || null, str(i.artist_name) || "Unknown",
+    str(i.album_name) || null, str(i.release_date, 20) || null, Number.isFinite(i.duration_ms) ? Math.round(i.duration_ms) : null, str(i.image_url, 500) || null)));
+  const added = res.reduce((n, r) => n + (r.meta?.changes || 0), 0);
+  const first = await env.DB.prepare("SELECT MIN(played_at) AS first, COUNT(*) AS total FROM plays").first();
+  return { ok: true, added, total: first.total, since: first.first };
+}
+async function getPlays(url, env) {
+  const since = str(url.searchParams.get("since"), 40) || "1970-01-01";
+  const { results } = await env.DB.prepare(`SELECT played_at, track_id, track_name, artist_id, artist_name, album_name, release_date, duration_ms, image_url
+    FROM plays WHERE played_at >= ? ORDER BY played_at DESC LIMIT 20000`).bind(since).all();
+  const meta = await env.DB.prepare("SELECT MIN(played_at) AS first, COUNT(*) AS total FROM plays").first();
+  return { items: results, total: meta.total, since: meta.first };
+}
+
+/* ------------------------------------------------------------------
+   /genres: Spotify's artist genres are being emptied out, so each artist
+   is labelled once by a small Claude model and the labels are stored.
+   ------------------------------------------------------------------ */
+async function getGenres(body, env) {
+  const artists = (Array.isArray(body.artists) ? body.artists : [])
+    .map(a => ({ id: str(a.id, 64), name: str(a.name, 120) })).filter(a => a.id && a.name).slice(0, 200);
+  if (!artists.length) return { genres: {} };
+  const out = {};
+  // read cache in chunks (SQLite parameter limit)
+  for (let i = 0; i < artists.length; i += 90) {
+    const chunk = artists.slice(i, i + 90);
+    const { results } = await env.DB.prepare(`SELECT artist_id, genres FROM artist_genres WHERE artist_id IN (${chunk.map(() => "?").join(",")})`).bind(...chunk.map(a => a.id)).all();
+    results.forEach(r => out[r.artist_id] = safeJson(r.genres, []));
+  }
+  const missing = artists.filter(a => !out[a.id]);
+  let labelled = 0;
+  if (missing.length && env.ANTHROPIC_API_KEY) {
+    const { results: vocab } = await env.DB.prepare(`SELECT value AS g, COUNT(*) AS n FROM artist_genres, json_each(artist_genres.genres) GROUP BY value ORDER BY n DESC LIMIT 80`).all();
+    for (let i = 0; i < missing.length; i += 60) {
+      const batch = missing.slice(i, i + 60);
+      let labels = {};
+      try { labels = await labelGenres(batch, vocab.map(v => v.g), env); } catch (e) { console.error("genre labelling", e); break; }
+      const stmt = env.DB.prepare("INSERT OR REPLACE INTO artist_genres (artist_id, artist_name, genres) VALUES (?, ?, ?)");
+      const writes = [];
+      batch.forEach((a, idx) => {
+        const g = labels[String(idx + 1)] || labels[a.name];
+        if (Array.isArray(g) && g.length) {
+          const clean = [...new Set(g.map(x => String(x).toLowerCase().trim()).filter(Boolean))].slice(0, 3);
+          out[a.id] = clean; writes.push(stmt.bind(a.id, a.name, JSON.stringify(clean))); labelled++;
+        }
+      });
+      if (writes.length) await env.DB.batch(writes);
+    }
+  }
+  return { genres: out, labelled };
+}
+
+async function labelGenres(batch, vocab, env) {
+  const list = batch.map((a, i) => `${i + 1}. ${a.name}`).join("\n");
+  const prompt = `Assign music genres to each artist below.
+
+Rules:
+- Give 1 to 3 genres per artist, most defining first.
+- Lowercase, the way a well-read record store would shelve them: specific enough to mean something ("indie folk", "city pop", "mandopop", "spiritual jazz", "math rock"), never vague ("music", "pop music", "various").
+- Reuse names from this existing vocabulary whenever one fits, so the same sound always gets the same name: ${vocab.length ? vocab.join(", ") : "(empty so far)"}.
+- If two artists share a name, choose the most widely known one.
+- If you genuinely do not know an artist, give your best guess from the name and context of the list rather than leaving it empty.
+
+Artists:
+${list}
+
+Respond with only a JSON object mapping each number to its array of genres, for example {"1": ["indie folk", "chamber pop"], "2": ["ambient"]}. No other text.`;
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: env.GENRE_MODEL || "claude-haiku-5-5", max_tokens: 3000, messages: [{ role: "user", content: prompt }] }),
+  });
+  if (!r.ok) throw new Error(`Claude API ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  const m = text.match(/\{[\s\S]*\}/);
+  return m ? JSON.parse(m[0]) : {};
 }
 
 /* ------------------------------------------------------------------

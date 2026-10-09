@@ -653,6 +653,7 @@ const Spotify = {
       following: following.artists?.items || [],
       liked: liked.items.map(i => i.track).filter(Boolean),
       recent: recent.items.map(i => i.track).filter(Boolean),
+      recentPlays: recent.items.filter(i => i.track && i.played_at),
     };
   },
   async searchArtist(name) {
@@ -662,6 +663,33 @@ const Spotify = {
     return items.find(a => norm(a.name) === norm(name)) || items[0] || null;
   },
 };
+
+/* ==================================================================
+   DIARY AND GENRES
+   ================================================================== */
+// Copy the last 50 plays into the diary. Fire-and-forget; duplicates are ignored server-side.
+function saveDiary() {
+  const items = (state.raw.recentPlays || []).map(i => ({
+    played_at: i.played_at, track_id: i.track.id, track_name: i.track.name,
+    artist_id: i.track.artists?.[0]?.id, artist_name: i.track.artists?.[0]?.name,
+    album_name: i.track.album?.name, release_date: i.track.album?.release_date,
+    duration_ms: i.track.duration_ms, image_url: i.track.album?.images?.[2]?.url || i.track.album?.images?.[0]?.url || "",
+  }));
+  if (!items.length) return;
+  Api.savePlays(items).then(r => { state.diary = { total: r.total, since: r.since }; }).catch(e => console.warn("diary", e));
+}
+
+// Replace Spotify's thinning genre arrays with stored Claude labels on every full artist object we hold.
+async function applyGenres() {
+  const r = state.raw;
+  const all = [...r.following, ...r.topArtists.long, ...r.topArtists.medium, ...r.topArtists.short];
+  const uniq = [...new Map(all.filter(a => a?.id).map(a => [a.id, { id: a.id, name: a.name }])).values()];
+  if (!uniq.length) return;
+  try {
+    const { genres } = await Api.genres(uniq);
+    all.forEach(a => { const g = genres?.[a.id]; if (Array.isArray(g) && g.length) a.genres = g; });
+  } catch (e) { console.warn("genres: keeping Spotify's", e); }
+}
 
 /* ==================================================================
    TASTE PROFILE
@@ -751,6 +779,8 @@ const Api = {
   history: () => Api.get("/history"),
   shelf: () => Api.get("/shelf"),
   photo: slot => Api.get("/photo?slot=" + encodeURIComponent(slot)),
+  savePlays: items => Api.post("/plays", { items }),
+  genres: artists => Api.post("/genres", { artists }),
   clearShelf: () => Api.post("/shelf/clear", {}),
 };
 
@@ -1097,6 +1127,8 @@ async function boot() {
     if (!cb && !(await Auth.ensure())) { show($("#login"), true); setPhoto($("#login"), "login"); return; }
     show($("#login"), false); setLoading(true, "Listening.");
     await Spotify.pullAll();
+    saveDiary();
+    await applyGenres();
     buildProfile();
     show($("#app"), true); show($("#nav"), true);
     renderTaste();

@@ -38,3 +38,26 @@ CREATE INDEX IF NOT EXISTS idx_log_shown            ON recommendation_log(shown_
 -- ALTER TABLE recommendation_log ADD COLUMN spotify_url TEXT;
 -- ALTER TABLE recommendation_log ADD COLUMN genres TEXT;
 CREATE INDEX IF NOT EXISTS idx_log_status ON recommendation_log(status);
+
+-- Listening diary: one row per play, copied from recently-played on every open
+CREATE TABLE IF NOT EXISTS plays (
+  played_at     TEXT PRIMARY KEY,
+  track_id      TEXT,
+  track_name    TEXT NOT NULL,
+  artist_id     TEXT,
+  artist_name   TEXT NOT NULL,
+  album_name    TEXT,
+  release_date  TEXT,
+  duration_ms   INTEGER,
+  image_url     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_plays_artist ON plays(artist_id);
+
+-- Genre labels per artist, written once by Claude (Spotify's genres field is being emptied)
+CREATE TABLE IF NOT EXISTS artist_genres (
+  artist_id     TEXT PRIMARY KEY,
+  artist_name   TEXT NOT NULL,
+  genres        TEXT NOT NULL,              -- JSON array, most defining first
+  source        TEXT NOT NULL DEFAULT 'claude',
+  labeled_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
