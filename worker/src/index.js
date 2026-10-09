@@ -30,6 +30,11 @@ export default {
     try {
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true }, 200, cors);
       if (request.method === "GET" && url.pathname === "/diag") return json(await diag(env), 200, cors);
+      if (request.method === "GET" && url.pathname === "/diag/genres") {
+        const test = [{ id: "diag-1", name: "Khalil Fong" }, { id: "diag-2", name: "Elephant Gym" }, { id: "diag-3", name: "Alice Coltrane" }, { id: "diag-4", name: "cero" }];
+        try { const r = await getGenres({ artists: test }, env); await env.DB.prepare("DELETE FROM artist_genres WHERE artist_id LIKE 'diag-%'").run(); return json({ ok: true, ...r }, 200, cors); }
+        catch (e) { return json({ ok: false, error: e.message }, 200, cors); }
+      }
       if (request.method === "GET" && url.pathname === "/diag/recommend") {
         const sample = { topGenres: [{ genre: "indie folk", weight: 1 }, { genre: "ambient", weight: 0.6 }, { genre: "jazz", weight: 0.4 }],
           anchorArtists: ["Bon Iver", "Nils Frahm", "Alice Coltrane"], eraDistribution: { "2010s": 0.6, "1970s": 0.4 },
