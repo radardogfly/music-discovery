@@ -1,55 +1,41 @@
 # Resonance Frontend: Hand-off Document
 
 Repository: `radardogfly/music-discovery`
-File covered: `index.html` (single-file application, no build step)
-Companion documents: `docs/worker-handoff.md` (Phase 4), `docs/setup.md` (Phase 5)
+Live: `https://radardogfly.github.io/music-discovery/`
+File covered: `index.html` (single-file application, no build step), `manifest.webmanifest`, `assets/icon/`
+Companion documents: `docs/worker-handoff.md`, `docs/setup.md`
+Revision: October 2026, after the shelf, diary, Taste and Diary tabs, device keys and embedded player
 
-## 1. Purpose
+## 1. What it is
 
-A single-page static web app, served from GitHub Pages, that:
+A single-page web app, served from GitHub Pages, with four tabs:
 
-1. Authenticates the user with Spotify (Authorization Code with PKCE, no client secret)
-2. Pulls the user's listening data directly from the Spotify Web API in the browser
-3. Builds a weighted taste profile client-side
-4. Sends that profile to a Cloudflare Worker, which asks Claude for artist recommendations
-5. Resolves each recommendation to a real Spotify artist via Search and renders twelve of them in a film-grain, Unsplash-style masonry grid
-6. Captures Keep/Pass verdicts with reason tags and sends them to the Worker for storage in D1, so the next batch improves
-
-Listening data never leaves the browser except as the aggregated profile. Only verdicts and the recommendation log are persisted.
-
-## 2. File Structure
-
-```
-music-discovery/
-  index.html                 the entire app: styles, markup, script
-  assets/photos/             ten Unsplash JPEGs (user-supplied, see section 9)
-    README.md
-  docs/
-    frontend-handoff.md      this file
-```
-
-Inside `index.html`, in order:
-
-| Block | Lines (approx) | Contents |
+| Tab | Question it answers | Data |
 |---|---|---|
-| `<style>` 1 to 3 | 15 to 150 | Design tokens, base reset, grain and mood grading |
-| `<style>` 4 to 11 | 150 to 330 | Nav, screens, masonry, card, profile, trends, history, footer |
-| Markup | 335 to 450 | Nav, login, loading, four views, footer, notice |
-| Script: CONFIG | 455 to 470 | All deployment constants |
-| Script: Auth | 500 to 560 | PKCE flow, token storage, refresh |
-| Script: Spotify | 565 to 610 | API wrapper, data pull, artist search |
-| Script: buildProfile | 615 to 680 | Taste profile construction |
-| Script: Api | 685 to 705 | Worker client |
-| Script: views | 710 to 830 | Discover, Profile, Trends, History renderers |
-| Script: boot | 835 to 855 | Navigation wiring and startup sequence |
+| Discover | What should I listen to next? | A persistent shelf of twelve Claude-recommended artists |
+| Taste | Who am I as a listener? | Genre record, Core/orbit/passing |
+| Diary | When and how much do I listen? | Listening clock, top ten by week/month/year, library rings |
+| History | What has the app shown me? | Every recommendation, with verdicts and tags |
+
+Display name inside the app: Resonance. Home-screen name: Music Discovery.
+
+## 2. Files
+
+```
+index.html                 the app: styles, markup, script
+manifest.webmanifest       home-screen install: name, icons, colours
+assets/icon/icon.svg       source of the app icon (midnight and brass record)
+assets/icon/*.png          renders: apple-touch-icon 180, 192, 512, favicon 32
+assets/photos/README.md    legacy: bundled photos were replaced by live Unsplash
+```
+
+Inside `index.html`, in order: tokens and base CSS; grain and mood grading; nav; screens and heroes; masonry and cards; Taste (record, orbit); Diary (clock, top ten, rings); History; then the script in blocks: CONFIG, state, utilities, Auth, Spotify, diary and genres, taste profile, Api, photographs, Discover, Taste, Diary, History, navigation and boot.
 
 ## 3. Configuration
 
-All deployment-specific values live in the `CONFIG` object at the top of the script.
-
 ```js
 const CONFIG = {
-  SPOTIFY_CLIENT_ID: "YOUR_SPOTIFY_CLIENT_ID",
+  SPOTIFY_CLIENT_ID: "b55a1fcd707849d4937235a08fe48bf3",
   REDIRECT_URI: "https://radardogfly.github.io/music-discovery/",
   API_BASE: "https://music-discovery.haidew.workers.dev",
   SCOPES: "user-top-read user-follow-read user-library-read user-read-recently-played",
@@ -57,147 +43,69 @@ const CONFIG = {
 };
 ```
 
-- `SPOTIFY_CLIENT_ID` is the only value that must be filled in before first use. It comes from the Spotify Developer Dashboard (Phase 5). It is safe to commit; Client IDs are public by design under PKCE.
-- `REDIRECT_URI` must match the Spotify app settings exactly, including the trailing slash.
-- `API_BASE` has no trailing slash.
-- `BATCH` is how many artists render per refresh. The Worker is asked for 16 so filtering leaves twelve.
+Other tunables near the top of the script: `WEIGHTS` (how each Spotify source contributes to the taste profile), `TAGS` (reason chips after Keep or Pass), `MOODS` (the closed list the Worker returns from). The eight-slot categorical palette for the genre record is in CSS as `--g1` to `--g8`; it was validated for colour-vision deficiency and contrast on both surfaces and must be kept in that order.
 
-Other tunables:
+## 4. Authentication and the device key
 
-- `WEIGHTS` controls how each Spotify source contributes to the taste profile.
-- `TAGS` defines the reason tags shown after Keep or Pass.
-- `MOODS` is the closed list the Worker must return from; unknown values fall back to `serene`.
+Login is Authorization Code with PKCE in the browser, so there is no client secret anywhere.
 
-## 4. Authentication
+What changed from the first build: the browser no longer keeps the Spotify refresh token. After the code exchange, `Auth.link()` posts the refresh token to the Worker's `/link`, which stores it encrypted and returns a **device key**. The browser keeps `device_key`, `sp_access` and `sp_expires` in `localStorage`, and removes `sp_refresh`.
 
-Standard PKCE:
+- Every call to the Worker sends `Authorization: Bearer <device_key>` (see `Api.headers()`).
+- When the access token expires, `Auth.refresh()` asks the Worker's `/token` for a new one. The Worker is the only party that refreshes with Spotify, which matters because Spotify rotates PKCE refresh tokens on every use.
+- A browser that still has a legacy `sp_refresh` from before linking refreshes locally once, then links. This path can be removed in a future revision.
+- Sign out posts `/unlink` (which wipes the token and every device key on the Worker), then clears local storage.
+- If `/link` fails (for example the Worker's `TOKEN_KEY` is unset), the app falls back to holding the token in the browser and keeps working without hourly sync.
 
-1. `Auth.login()` generates a 64-character verifier, stores it in `sessionStorage`, computes the S256 challenge, and redirects to `accounts.spotify.com/authorize`.
-2. On return, `Auth.handleCallback()` reads `?code=`, exchanges it at `accounts.spotify.com/api/token` with the verifier, then cleans the URL with `history.replaceState`.
-3. Tokens are stored in `localStorage` as `sp_access`, `sp_expires`, `sp_refresh`.
-4. `Auth.ensure()` runs on every load: uses the stored access token if not expired, otherwise refreshes silently.
-5. `Spotify.get()` retries once on 401 after a refresh, and honours `Retry-After` on 429.
-6. Sign out clears the three keys and reloads.
+## 5. Data pulled from Spotify
 
-The scopes requested are the minimum needed. Adding scopes requires users to re-authorize.
+`Spotify.pullAll()` runs nine requests in parallel: top artists and top tracks for `short_term`, `medium_term`, `long_term`; followed artists; the first 50 saved tracks; recently played (kept with `played_at` as `recentPlays`). The Diary tab additionally pages the entire saved-tracks library (`loadLibrary()`, 50 per request, four in parallel, capped at 6,000) the first time it is opened.
 
-## 5. Spotify Data Pull
+Spotify data that is **no longer available** to this app and must not be relied on: audio features, recommendations, related artists, artist top tracks, popularity, followers. Artist `genres` still exists but is being emptied by Spotify; see section 6.
 
-`Spotify.pullAll()` runs nine requests in parallel and stores the results in `state.raw`:
+## 6. Genres
 
-| Key | Endpoint | Used by |
-|---|---|---|
-| `topArtists.long/medium/short` | `/me/top/artists?time_range=` | Profile, Trends, taste profile |
-| `topTracks.long/medium/short` | `/me/top/tracks?time_range=` | Taste profile, era distribution |
-| `following` | `/me/following?type=artist` | Taste profile (highest weight), anchors |
-| `liked` | `/me/tracks` | Taste profile |
-| `recent` | `/me/player/recently-played` | Taste profile, low weight. Wrapped in a catch because this endpoint fails on accounts with no playback history |
+`applyGenres()` runs before the profile is built. It sends every full artist object the app holds (followed plus the three top-artist lists) to the Worker's `/genres`, which returns stored Claude labels and labels anything new. Those labels overwrite `artist.genres` in memory, so the taste profile, the genre record and Claude's own recommendation prompt all use the same vocabulary.
 
-All endpoints are limited to 50 items, the maximum per request. No pagination is performed; for a single user's taste profile the top 50 of each is sufficient signal.
+## 7. Taste profile
 
-## 6. Taste Profile Construction
+`buildProfile()` scores every artist seen across sources with `WEIGHTS`, decaying by list position, and produces the payload sent to `/recommend`: `topGenres`, `anchorArtists`, `eraDistribution`, `libraryArtistIds`, `libraryArtistNames`, `trendSignal`. The two library lists are the exclusion set; nothing already yours is ever shown as a discovery.
 
-`buildProfile()` produces `state.profile`, the only payload sent to the Worker:
+## 8. Discover: the shelf
 
-```json
-{
-  "topGenres":          [{ "genre": "...", "weight": 0.0 to 1.0 }],   up to 15
-  "anchorArtists":      ["..."],                                        top 12 names
-  "eraDistribution":    { "1990s": 0.12, "2010s": 0.44 },               shares summing to 1
-  "libraryArtistIds":   ["..."],                                        every artist id seen
-  "libraryArtistNames": ["..."],                                        every artist name seen
-  "trendSignal":        { "emerging": ["..."], "fading": ["..."] }
-}
-```
+The twelve are persistent. `loadShelf()` reads them from `/shelf` (image, link, genres included, so no Spotify lookups), renders, then `topUpShelf()` fills only the empty slots with one `/recommend` call for `need + 4` candidates. Each candidate is resolved against Spotify Search (`Spotify.searchArtist`, exact normalised match preferred), filtered against the library and the current shelf, and the first `need` survivors are appended and logged with `/shown`.
 
-Scoring logic:
+Card interactions: clicking the photo expands the card; the first expansion injects Spotify's embedded player for that artist (`open.spotify.com/embed/artist/<id>`, dark theme, 152px). Keep or Pass reveals tag chips; Done posts `/feedback`, dims the card, then after a beat removes it and tops up one replacement. "Replace all" posts `/shelf/clear` and rebuilds.
 
-- Every artist encountered in any source accumulates a score. Weights per source are in `WEIGHTS`. Ranked lists decay linearly by position (`1 - index/100`) so the first entry counts more than the fiftieth.
-- Genres are only present on full artist objects, not on the partial artist objects attached to tracks. A second pass copies genres from any full artist object with the same id onto track-only artists, so their score contributes to the genre vector.
-- `eraDistribution` is built from album release years on tracks, bucketed by decade.
-- `emerging` is artists in the short-term top 50 but absent from long-term; `fading` is the reverse.
-- `libraryArtistIds` and `libraryArtistNames` are the exclusion list. Nothing already in the library is ever shown as a discovery.
+The hero's mood is the most common mood on the shelf; its photograph is swapped when that changes.
 
-Also stored for the Profile view: `state.anchors` (top 18 with images), `state.genres`, `state.eras`.
+## 9. Taste
 
-## 7. Recommendation Flow
+**Genre record** (`renderRecord`): shares computed from the chosen window's top-artist list (rank-weighted), top eight plus "everything else", drawn as thick arcs on one radius with a 2px surface gap, faint grooves over them, a paper label in the centre. Hover or tap a band or its list row to see share and the three artists behind it. The window switch recomputes.
 
-`loadRecommendations()`:
+**Core, orbit, passing** (`renderOrbit`): artists placed on three rings by how many of the three windows contain them. Right half is arriving (present in the shorter window), left half is leaving. Face size per ring is computed from available arc so neighbours never touch. Tapping a face shows its rank in each window. A one-line takeaway is written from the counts.
 
-1. `POST {API_BASE}/recommend` with `{ profile, count: 16 }`. Expects `{ candidates: [{ name, reason, mood, confidence }] }`.
-2. For each candidate, in order: skip if already seen this batch, previously passed (from history), or present in library names.
-3. `Spotify.searchArtist(name)` resolves the name. Exact normalized match preferred, else first result. Skip if nothing found or the resolved id is in `libraryArtistIds`.
-4. Stop at `BATCH` resolved artists.
-5. Fire-and-forget `POST /shown` with the batch so the Worker can avoid repeats across sessions.
-6. Render.
+## 10. Diary
 
-If the Worker is unreachable, an empty state renders and a notice appears. The app is still usable for Profile and Trends, which need no Worker.
+Loaded on first visit (`openDiary`): `/plays` for the diary, then the full library.
 
-## 8. Feedback Flow
+- **Status line** (`renderDiaryStatus`): total plays, start date, progress toward the first week or month, and whether plays are collected hourly (Worker linked) or only on open.
+- **Your day** (`renderClock`): 24 bars on a dial, midnight at top, busiest hour in brass, weekday bars beside it. Needs at least 10 plays.
+- **Top ten** (`renderTopTen`): a **Your diary / Spotify** source switch, an **Artists / Tracks** switch, three columns (tabs on phones). Diary mode counts real plays for the last 7, 30 and 365 days via `diaryLists()`; Spotify mode uses the three native windows. Movement chevrons compare with the longer window. The app defaults to diary mode once 30 plays exist.
+- **All your years** (`renderRings`): one dot per saved song, rings per year oldest at centre, months clockwise from the top; deterministic jitter spreads dots across the band. Hover or tap a month sector for its count and top artists.
 
-1. Clicking a card's photo toggles the inline detail panel.
-2. "Keep" or "Pass" sets `r.verdict` and reveals the matching tag set from `TAGS`.
-3. Tag chips are multi-select; the selection is held in `r.tags`.
-4. "Done" calls `commitFeedback()`: dims the card to 60 percent, stamps the verdict in the corner, and `POST /feedback` with:
+## 11. Photographs
 
-```json
-{ "artist_name", "spotify_id", "verdict": "up" | "down", "mood", "genres": [], "tags": [] }
-```
+`setPhoto(container, slot)` asks the Worker's `/photo` for one Unsplash image for the slot (`login`, the six moods, `profile`, `diary`, `history`), fades it in over the gradient fallback, and writes the photographer credit. Every open gets a fresh image. If the request fails, the gradient stays.
 
-5. The verdict is prepended to `state.history` so the History view updates without a refetch.
+## 12. Visual system
 
-## 9. Visual System Implementation
+Unchanged in principle from the design spec: Fraunces and Inter; warm paper light mode, dark follows system; one CSS grain (`feTurbulence` tile, `mix-blend-mode: overlay`, weight per mood via `--grain`); mood grading by `filter` plus a multiplied `.tint`; vignette and light leak on heroes; CSS-column masonry. Safe-area insets are applied on nav, heroes, footer and notices. On touch devices the card reason line is always visible.
 
-All of Phase 2 is implemented in CSS; nothing is image-processed server-side.
+## 13. Known limits
 
-**Grain** is a single `::after` pseudo-element on every `.photo` container, using an inline SVG `feTurbulence` tile at 220px, `mix-blend-mode: overlay`. Opacity is set per mood through the `--grain` custom property (0.08 light, 0.14 medium, 0.22 heavy).
-
-**Mood grading** is applied by adding `mood-<name>` to any `.photo` container. Each class sets a CSS `filter` on the image, a multiply-blended `.tint` layer colour, the `--grain` weight, and `--mood` (the accent colour used by the card's left border and mood label). To change a grade, edit the three rules for that mood in section 3 of the stylesheet.
-
-**Vignette and light leak** come from the `::before` pseudo-element; `.leak` adds the warm diagonal gradient and is only used on hero-scale images.
-
-**Masonry** uses CSS `column-count` (3, 2, 1 by breakpoint) with `break-inside: avoid`. Cards cycle through three aspect ratios (`r34`, `r11`, `r43`) in a fixed sequence so the grid never looks uniform.
-
-**Theme** follows the system by default. Setting `data-theme="light"` or `data-theme="dark"` on `<html>` overrides it; no toggle is exposed in the UI.
-
-**Photographs** load from `assets/photos/<slot>.jpg`. Every `<img>` has an `onerror` that swaps in a dark gradient `div.fill`, so the app renders correctly before photos are added. Slots and search direction:
-
-| File | Search direction on Unsplash |
-|---|---|
-| `melancholic.jpg` | overcast coastline, rain on window, muted |
-| `euphoric.jpg` | backlit figure, golden hour, lens flare |
-| `restless.jpg` | night street, motion blur, neon reflections |
-| `serene.jpg` | still interior, soft daylight, linen or wood |
-| `driving.jpg` | highway at night, long exposure |
-| `hazy.jpg` | fogged field, faded landscape |
-| `login.jpg` | empty concert hall or vinyl close-up, low light |
-| `loading.jpg` | abstract light leak, out of focus |
-| `empty.jpg` | single chair in an empty room |
-| `profile.jpg` | analog mixing desk or tape reel |
-
-Recommended export: 2000px on the long edge, JPEG quality 80, to keep each under 400KB. Unsplash licence permits this use; attribution is already present in the footer.
-
-## 10. Worker Contract
-
-The frontend expects these endpoints on `API_BASE`, all JSON, CORS enabled for the Pages origin:
-
-| Method | Path | Request | Response |
-|---|---|---|---|
-| POST | `/recommend` | `{ profile, count }` | `{ candidates: [{ name, reason, mood, confidence }] }` |
-| POST | `/feedback` | `{ artist_name, spotify_id, verdict, mood, genres, tags }` | `{ ok: true }` |
-| POST | `/shown` | `{ items: [{ artist_name, spotify_id, reason, mood }] }` | `{ ok: true }` |
-| GET | `/history` | none | `{ items: [{ artist_name, verdict, tags, mood, created_at }] }` |
-
-`/history` should return both rated entries (from `feedback`) and unrated shown entries (from `recommendation_log`), newest first. Entries without a verdict render under the "Unrated" filter.
-
-## 11. Running Locally
-
-The app can be opened as a file for layout work, but Spotify auth requires the registered redirect URI, so a real login only works at the deployed Pages URL or an additional redirect URI registered in the Spotify app. For local auth testing, add `http://127.0.0.1:8080/` to the Spotify app's redirect list, set `CONFIG.REDIRECT_URI` to match temporarily, and serve with `python3 -m http.server 8080`.
-
-## 12. Known Limits and Future Work
-
-- Spotify Development Mode caps the app at 5 authorized users and requires the owner to hold Premium. This build is single-user by design.
-- `/me/player/recently-played` returns nothing for accounts that have not played anything recently; the profile still builds from the other eight sources.
-- Artist resolution via Search can mismatch on very common names. The exact-match preference reduces this; a future improvement is to let Claude return the artist's best-known album alongside the name and verify against it.
-- Masonry via CSS columns orders cards top-to-bottom per column, not left-to-right. This matches Unsplash's reading order and is intentional.
-- There is no pagination of history. For a single user this stays fast for years.
+- Spotify Development Mode: owner needs Premium; at most 5 authorised users.
+- Spotify remembers only 50 plays; the hourly Worker sync keeps the diary complete for normal listening, but a very long session between two hourly checks can still drop plays.
+- Search resolution can mismatch on very common artist names.
+- CSS-column masonry orders cards top-to-bottom per column, by design.
+- The library read is capped at 6,000 songs.

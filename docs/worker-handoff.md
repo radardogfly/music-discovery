@@ -1,170 +1,134 @@
 # Resonance Worker: Hand-off Document
 
 Repository: `radardogfly/music-discovery`, folder `worker/`
-Deployed name: `music-discovery` at `https://music-discovery.haidew.workers.dev`
+Deployed: Cloudflare Worker `music-discovery` at `https://music-discovery.haidew.workers.dev`
 Database: D1 `music-discovery-db`, id `ec5a29ee-7ae1-49a8-b700-05349f8efd11`, region ENAM
-Companion documents: `docs/frontend-handoff.md` (Phase 3), `docs/setup.md` (Phase 5)
+Deployment: GitHub Actions, `.github/workflows/deploy-worker.yml`, on every push touching `worker/`
+Companion documents: `docs/frontend-handoff.md`, `docs/setup.md`
+Revision: October 2026
 
-## 1. Purpose
+## 1. What it does
 
-The Worker is the only server-side component. It exists for two reasons:
+The Worker is the only server-side component. It:
 
-1. To hold the Claude API key, which must never reach the browser
-2. To own the D1 database that remembers verdicts and what has already been shown, so recommendations improve over time and never repeat
-
-It holds no Spotify credentials and never sees the user's raw listening data, only the aggregated taste profile the frontend sends.
+1. Holds every secret: the Claude key, the Unsplash key, the token-encryption key, and (encrypted) the user's Spotify refresh token
+2. Issues device keys to browsers and requires one on every route
+3. Owns the D1 database: shelf, verdicts, diary, genre labels
+4. Runs an hourly scheduled job that pulls recent plays into the diary
+5. Calls Claude for recommendations and genre labels, under an hourly ceiling
 
 ## 2. Files
 
 ```
-worker/
-  wrangler.toml      name, D1 binding, non-secret vars
-  schema.sql         D1 schema; already applied to the live database
-  src/index.js       the Worker, no dependencies, no build step
+worker/wrangler.toml   name, D1 binding, public vars, cron trigger
+worker/schema.sql      full schema, all applied to the live database
+worker/src/index.js    the Worker, no dependencies
 ```
 
 ## 3. Configuration
 
-`wrangler.toml` carries everything that is safe to commit:
+Public vars in `wrangler.toml`:
 
-| Key | Value | Notes |
+| Var | Value | Purpose |
 |---|---|---|
-| `name` | `music-discovery` | becomes the workers.dev hostname |
-| `[[d1_databases]].binding` | `DB` | the name used in code as `env.DB` |
-| `[[d1_databases]].database_id` | `ec5a29ee-...` | the live database |
-| `ALLOWED_ORIGIN` | `https://radardogfly.github.io` | comma-separated list accepted; localhost always allowed |
-| `CLAUDE_MODEL` | `claude-sonnet-5-5` | change here to trade cost against quality |
+| `ALLOWED_ORIGIN` | `https://radardogfly.github.io` | CORS; localhost is also allowed |
+| `CLAUDE_MODEL` | `claude-sonnet-5-5` | recommendations |
+| `GENRE_MODEL` | `claude-haiku-5-5` | genre labelling |
+| `SPOTIFY_CLIENT_ID` | `b55a1fcd...` | needed to refresh Spotify tokens |
+| `[triggers] crons` | `0 * * * *` | hourly diary sync |
 
-One secret, set outside the file and never committed:
+Secrets, held as GitHub repository secrets and pushed to Cloudflare by the workflow:
 
-```
-npx wrangler secret put ANTHROPIC_API_KEY
-```
+| Secret | Purpose |
+|---|---|
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | lets the workflow deploy |
+| `ANTHROPIC_API_KEY` | Claude |
+| `UNSPLASH_ACCESS_KEY` | photographs |
+| `TOKEN_KEY` | base64 of 32 random bytes; AES-GCM key for the stored Spotify refresh token |
 
-Model note: Sonnet 5.5 is the default because the task is taste reasoning over a few hundred tokens of profile, which does not need the top tier. `claude-haiku-5-5` is roughly five times cheaper and acceptable for this; `claude-opus-5-5` is noticeably better at avoiding the obvious picks if cost is no concern.
+Rotating a secret: change it in GitHub, then run the workflow (Actions, Deploy Worker, Run workflow). Rotating `TOKEN_KEY` makes the stored Spotify token unreadable; the next browser open re-links automatically.
 
-## 4. Endpoints
+## 4. Authentication model
 
-All responses are JSON. CORS is enforced: requests from an origin not in `ALLOWED_ORIGIN` (or localhost) receive 403.
+- `POST /link` takes a Spotify refresh token (from the browser's PKCE exchange), proves it by refreshing once, stores the rotated token encrypted in `settings`, inserts a hashed random **device key** into `devices`, and returns the key with a current access token.
+- Every other route except `/health` requires `Authorization: Bearer <device key>`; `requireDevice()` hashes it and looks it up. Unknown or missing keys get 401.
+- `GET /token` returns a cached access token if it has more than two minutes left, otherwise refreshes with Spotify and stores the rotated refresh token. Because the Worker is the sole refresher, Spotify's rotation never invalidates a browser.
+- `POST /unlink` deletes the token and all device keys.
+- CORS is enforced on browser requests; the device key is what stops non-browser callers.
 
-### POST /recommend
+Encryption: `seal()` and `open()` use AES-GCM with a fresh 12-byte IV per write; stored as `base64(iv).base64(ciphertext)`.
 
-Request:
-```json
-{ "profile": { ...taste profile from the frontend... }, "count": 16 }
-```
-`count` is clamped to 8 to 24.
+## 5. Routes
 
-Response:
-```json
-{ "candidates": [ { "name": "...", "reason": "...", "mood": "hazy", "confidence": 0.7 } ], "model": "claude-sonnet-5-5" }
-```
+| Method | Path | Body or query | Returns |
+|---|---|---|---|
+| GET | `/health` | | `{ ok }` |
+| POST | `/link` | `{ refresh_token, label }` | `{ device_key, access_token, expires_in }` |
+| GET | `/token` | | `{ access_token, expires_in }` |
+| POST | `/unlink` | | `{ ok }` |
+| POST | `/recommend` | `{ profile, count }` | `{ candidates: [{ name, reason, mood, confidence }] }` |
+| POST | `/feedback` | `{ artist_name, spotify_id, verdict, mood, genres, tags }` | `{ ok, id }` |
+| POST | `/shown` | `{ items: [{ artist_name, spotify_id, reason, mood, image_url, spotify_url, genres }] }` | `{ ok, logged }` |
+| GET | `/shelf` | | `{ items }` active, oldest first |
+| POST | `/shelf/clear` | | `{ ok, dismissed }` |
+| GET | `/history` | | `{ items }` rated plus unrated shown, newest first |
+| POST | `/plays` | `{ items: [{ played_at, track_id, track_name, artist_id, artist_name, album_name, release_date, duration_ms, image_url }] }` | `{ ok, added, total, since }` |
+| GET | `/plays` | `?since=ISO` | `{ items, total, since, linked, lastSync }` |
+| POST | `/genres` | `{ artists: [{ id, name }] }` | `{ genres: { id: [..] }, labelled }` |
+| GET | `/photo` | `?slot=` | `{ ok, url, photographer, photographerUrl, photoUrl }` |
 
-Pipeline:
-1. Read feedback memory from D1: the last 120 verdicts with their tags, rejection-tag frequency counts, and the last 300 distinct artists ever shown.
-2. Build an exclusion set: library artist names from the profile, every rated artist, every shown artist.
-3. Build the prompt (section 5) and call the Claude Messages API with a forced tool call so the output is guaranteed structured.
-4. Drop any candidate in the exclusion set or duplicated within the batch. Normalise mood to the six allowed values.
+## 6. Recommendation pipeline
 
-The frontend applies its own second filter (Spotify id match against the library) after resolving names via Search.
+1. Read feedback memory: last 120 verdicts with tags, rejection-tag counts, last 300 distinct shown artists.
+2. Exclusion set: library names from the profile, every rated artist, every shown artist.
+3. Build the prompt (`buildPrompt`): listener profile, kept and passed lists with tags, rejection pattern, nine rules. Rule 2 forbids obvious adjacent names; rule 3 turns rejection tags into constraints; rule 5 forces spread.
+4. Call Claude with the `recommend_artists` tool available and `tool_choice: auto` plus a system line instructing the tool call. (The forced `tool_choice: tool` mode is not supported by this model.) A text fallback parses JSON if the model answers in prose.
+5. Drop exclusions and duplicates; normalise mood.
 
-### POST /feedback
+## 7. Genre labelling
 
-Request:
-```json
-{ "artist_name": "...", "spotify_id": "...", "verdict": "up" | "down", "mood": "...", "genres": ["..."], "tags": ["..."] }
-```
-Writes one `feedback` row and one `feedback_tags` row per distinct tag (max 8). Returns `{ ok: true, id }`. 400 if `artist_name` or a valid `verdict` is missing.
+`getGenres` returns cached labels from `artist_genres` and labels missing artists in batches of 60 with Haiku, feeding the 80 most-used existing labels as a vocabulary so names stay consistent. Labels are stored once per artist id. First run for ~100 artists costs well under a cent.
 
-### POST /shown
+## 8. Shelf and verdicts
 
-Request: `{ "items": [ { "artist_name", "spotify_id", "reason", "mood" } ] }` (max 24)
-Writes one `recommendation_log` row per item. Returns `{ ok: true, logged: n }`.
+`recommendation_log.status` is `active` (on the shelf), `rated` (a verdict was given) or `dismissed` (Replace all). `/feedback` marks the matching active row rated. `/shown` stores image, link and genres so the shelf renders without Spotify. `/history` merges rated rows from `feedback` with unrated rows from `recommendation_log`.
 
-### GET /history
+## 9. Diary and hourly sync
 
-Returns `{ items: [...] }`, newest first: every rated artist (with verdict and tags) plus every shown-but-unrated artist (verdict `null`), each capped at 500 rows. The frontend's "Unrated" filter is the null-verdict subset.
+`/plays` inserts with `INSERT OR IGNORE` on `played_at`, so re-sending the same 50 is free. The scheduled handler (`syncPlays`) runs hourly: refresh token, fetch `/me/player/recently-played?limit=50`, insert, record the outcome in `settings.last_sync`. The frontend shows that status.
 
-### GET /health
+## 10. Claude call ceiling
 
-Returns `{ ok: true }`. Useful to confirm deployment and CORS before touching the frontend.
+`claudeBudget()` counts rows in `api_calls` from the last hour before any Claude call and refuses with 429 at 40. Both recommendations and genre labelling count. A monthly spend limit in the Claude console is the hard stop and should also be set.
 
-## 5. Prompt Design
+## 11. Database
 
-The prompt is built in `buildPrompt()` and has three sections.
+Tables: `feedback`, `feedback_tags`, `recommendation_log`, `plays`, `artist_genres`, `settings`, `devices`, `api_calls`. Full definitions in `schema.sql`. Everything is applied to the live database; the file is a record and a way to rebuild.
 
-**Listener profile.** Genre weights, era distribution, anchor artists, and the rising/fading signal, all straight from the frontend payload.
-
-**Feedback memory.** Kept artists with their tags, passed artists with their tags, and a tag-frequency summary of all rejections. This is what makes the system learn: a bare thumbs-down teaches nothing, but "passed: X [too mainstream, wrong energy]" repeated across a dozen entries is a precise correction.
-
-**Rules.** Nine numbered constraints. The ones that matter most for the discovery goal:
-
-- Rule 2 forbids the obvious adjacent names and defines what "one or two steps removed" means in practice (scene of origin, producer's other project, regional parallel, earlier generation, current carrier of the sensibility).
-- Rule 3 turns the rejection-tag frequencies into hard constraints, mapping each tag to a concrete adjustment.
-- Rule 5 forces spread across genres and moods so a batch never collapses into one corner.
-- Rule 6 demands the canonical Spotify-searchable name, which is what makes the frontend's Search resolution reliable.
-
-The tool schema (`recommend_artists`) fixes the output shape, enumerates the six moods, and requires exactly `count` items. The call uses `tool_choice: { type: "tool", name: "recommend_artists" }` so the model cannot answer in prose.
-
-To tune behaviour, edit the rules text. To change batch size or over-fetch, change `count` in the frontend's `Api.recommend`. To change how much history feeds the prompt, edit the `LIMIT` values in `recommend()`.
-
-## 6. Database
-
-Schema is in `schema.sql` and is already applied. Three tables:
-
-| Table | Row per | Written by |
-|---|---|---|
-| `feedback` | verdict | `/feedback` |
-| `feedback_tags` | tag on a verdict | `/feedback` |
-| `recommendation_log` | artist shown in a batch | `/shown` |
-
-Useful queries for your own analysis (run in the Cloudflare dashboard, D1, Console):
+Useful queries (Cloudflare dashboard, D1, Console):
 
 ```sql
--- Keep rate overall
-SELECT verdict, COUNT(*) FROM feedback GROUP BY verdict;
-
--- Why you pass
-SELECT t.tag, COUNT(*) n FROM feedback_tags t JOIN feedback f ON f.id = t.feedback_id
-WHERE f.verdict = 'down' GROUP BY t.tag ORDER BY n DESC;
-
--- Keep rate by mood
-SELECT mood, SUM(verdict = 'up') kept, COUNT(*) total FROM feedback GROUP BY mood;
-
--- Everything you kept, most recent first
-SELECT artist_name, created_at FROM feedback WHERE verdict = 'up' ORDER BY created_at DESC;
+SELECT verdict, COUNT(*) FROM feedback GROUP BY verdict;                         -- keep rate
+SELECT artist_name, COUNT(*) n FROM plays WHERE played_at > date('now','-30 days') GROUP BY artist_name ORDER BY n DESC LIMIT 10;
+SELECT value, updated_at FROM settings WHERE key = 'last_sync';                    -- did the hourly sync run
+SELECT COUNT(*) FROM api_calls WHERE at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour');
 ```
 
-To wipe and start over: `DELETE FROM feedback_tags; DELETE FROM feedback; DELETE FROM recommendation_log;`
+Reset verdicts and shelf: `DELETE FROM feedback_tags; DELETE FROM feedback; DELETE FROM recommendation_log;`
+Reset the diary: `DELETE FROM plays;`
+Force every browser to log in again: `DELETE FROM devices; DELETE FROM settings WHERE key LIKE 'spotify_%';`
 
-## 7. Error Handling
+## 12. Errors
 
-- Bad input: 400 with `{ error }`.
-- Claude API failure: 502 with the status and the first 300 characters of the upstream message.
-- Missing secret: 500 `ANTHROPIC_API_KEY not configured`.
-- D1 failure: 500 with the SQLite message.
-- Disallowed origin: 403.
+400 bad input · 401 missing or unknown device key · 409 `/token` with nothing linked · 429 Claude ceiling · 502 upstream (Claude, Spotify, Unsplash) with the first part of the message · 503 `TOKEN_KEY` not configured.
 
-The frontend treats any non-2xx from `/recommend` as "service unreachable" and shows the empty state; Profile and Trends keep working without the Worker.
-
-## 8. Local Testing
+## 13. Local testing
 
 ```
-cd worker
-npx wrangler dev --remote      # uses the live D1 and your secret
-curl http://localhost:8787/health
+cd worker && npx wrangler dev --remote
 ```
+`--remote` uses the live D1 and secrets. Scheduled handler: `npx wrangler dev --remote --test-scheduled`, then open `http://localhost:8787/__scheduled`.
 
-`--remote` is needed because the schema lives in the production database. Without it, wrangler uses an empty local SQLite and you would need to apply `schema.sql` to it with `npx wrangler d1 execute music-discovery-db --local --file=schema.sql`.
+## 14. Costs
 
-A mocked smoke test of every route (fake D1, fake Claude) was run during the build and passes: health, feedback with duplicate-tag collapse, shown, history, recommend with library exclusion, and 400 on an invalid verdict.
-
-## 9. Costs
-
-Per refresh: one Claude call of roughly 1,500 input tokens and 1,200 output tokens. On Sonnet 5.5 that is well under one cent. D1 and Workers usage for a single user sit inside the free tier indefinitely.
-
-## 10. Known Limits and Future Work
-
-- No authentication on the Worker. CORS limits browser callers to the Pages origin, but anyone who knows the URL can hit it with curl. For a single private user this is acceptable; if it ever matters, add a shared bearer token as a second secret and check it in `fetch()`.
-- `/history` caps at 500 rated and 500 shown rows. A pagination parameter would be a small addition.
-- The exclusion of shown artists is by exact lowercase name. A different spelling from Claude would slip through; the frontend's Spotify-id filter catches the library case but not the shown-before case.
+Recommendations: roughly 1,500 input and 1,200 output tokens per call on Sonnet, under a cent. Genres: Haiku, a fraction of that, once per artist. Workers, D1, cron: free tier for one user. Unsplash: 50 requests per hour on the demo tier, far above actual use.
