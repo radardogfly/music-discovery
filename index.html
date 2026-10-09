@@ -156,6 +156,15 @@ p { margin: 0; max-width: 62ch; }
 /* fallback fill when a photo is missing */
 .fill { background: linear-gradient(160deg, #3a3531, #1a1816); }
 
+.credit {
+  position: absolute; right: var(--margin); bottom: calc(14px + var(--safe-bottom)); z-index: 6;
+  font-size: 11px; letter-spacing: 0.06em; color: #F4F1EB; opacity: 0.55; transition: opacity 300ms;
+}
+.credit:hover { opacity: 0.9; }
+.credit a { border-bottom: 1px solid currentColor; }
+.photo img.swap { opacity: 0; transition: opacity 900ms var(--ease); }
+.photo img.swap.in { opacity: 1; }
+
 /* ------------------------------------------------------------------
    4. Navigation
    ------------------------------------------------------------------ */
@@ -459,6 +468,7 @@ const state = {
   recs: [],               // current batch
   history: [],            // from the Worker
   filter: "all",
+  heroMood: null,
 };
 
 /* ==================================================================
@@ -671,8 +681,31 @@ const Api = {
   logShown: items => Api.post("/shown", { items }),
   history: () => Api.get("/history"),
   shelf: () => Api.get("/shelf"),
+  photo: slot => Api.get("/photo?slot=" + encodeURIComponent(slot)),
   clearShelf: () => Api.post("/shelf/clear", {}),
 };
+
+/* ==================================================================
+   PHOTOGRAPHS: live from Unsplash via the Worker, one per slot per open
+   ================================================================== */
+async function setPhoto(container, slot) {
+  if (!container) return;
+  try {
+    const p = await Api.photo(slot);
+    if (!p.ok || !p.url) return;
+    const img = new Image();
+    img.alt = ""; img.className = "swap";
+    img.onload = () => {
+      container.querySelectorAll("img, .fill").forEach(n => n.remove());
+      container.insertBefore(img, container.firstChild);
+      requestAnimationFrame(() => img.classList.add("in"));
+      let c = container.querySelector(".credit");
+      if (!c) { c = document.createElement("div"); c.className = "credit"; container.appendChild(c); }
+      c.innerHTML = `Photograph by <a href="${esc(p.photographerUrl)}" target="_blank" rel="noopener">${esc(p.photographer)}</a> on <a href="${esc(p.photoUrl)}" target="_blank" rel="noopener">Unsplash</a>`;
+    };
+    img.src = p.url;
+  } catch (e) { console.warn("photo", e); }
+}
 
 /* ==================================================================
    DISCOVER
@@ -747,8 +780,8 @@ function renderDiscover() {
   const counts = {}; state.recs.forEach(r => counts[r.mood] = (counts[r.mood] || 0) + 1);
   const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || "serene";
   const hero = $("#hero"); hero.className = `hero photo leak mood-${dominant}`;
-  const hi = $("#hero-img"); if (hi) hi.src = `assets/photos/${dominant}.jpg`;
   $("#hero-title").textContent = `Tonight leans ${dominant}.`;
+  if (state.heroMood !== dominant) { state.heroMood = dominant; setPhoto(hero, dominant); }
 
   const ratios = ["r34","r11","r43","r34","r43","r11"];
   state.recs.forEach((r, i) => {
@@ -894,12 +927,13 @@ $$("#filters button").forEach(b => b.addEventListener("click", () => {
 async function boot() {
   try {
     const cb = await Auth.handleCallback();
-    if (!cb && !(await Auth.ensure())) { show($("#login"), true); return; }
+    if (!cb && !(await Auth.ensure())) { show($("#login"), true); setPhoto($("#login"), "login"); return; }
     show($("#login"), false); setLoading(true, "Listening.");
     await Spotify.pullAll();
     buildProfile();
     show($("#app"), true); show($("#nav"), true);
     renderProfile(); renderTrends();
+    setPhoto($(".profile-head"), "profile");
     await loadHistory();
     await loadShelf();
     updateNav();

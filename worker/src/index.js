@@ -39,6 +39,7 @@ export default {
       }
       if (request.method === "GET" && url.pathname === "/history") return json(await getHistory(env), 200, cors);
       if (request.method === "GET" && url.pathname === "/shelf") return json(await getShelf(env), 200, cors);
+      if (request.method === "GET" && url.pathname === "/photo") return json(await getPhoto(url.searchParams.get("slot") || "serene", env), 200, cors);
       if (request.method === "POST" && url.pathname === "/shelf/clear") return json(await clearShelf(env), 200, cors);
       if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/feedback") return json(await saveFeedback(await request.json(), env), 200, cors);
@@ -128,6 +129,44 @@ async function logShown(body, env) {
       str(i.image_url, 500) || null, str(i.spotify_url, 200) || null, JSON.stringify(Array.isArray(i.genres) ? i.genres.slice(0, 3).map(g => str(g, 60)) : []))
   ));
   return { ok: true, logged: items.length };
+}
+
+/* ------------------------------------------------------------------
+   /photo: one Unsplash photograph for a slot, random each call
+   ------------------------------------------------------------------ */
+const PHOTO_QUERIES = {
+  melancholic: ["overcast coastline", "rain on window", "grey sea fog", "empty beach winter"],
+  euphoric:    ["golden hour backlight", "summer light flare", "sun through trees", "warm sunset field"],
+  restless:    ["night city motion blur", "neon rain street", "long exposure traffic night", "city lights bokeh"],
+  serene:      ["soft daylight interior", "linen curtain window light", "still lake morning", "minimal calm room"],
+  driving:     ["highway night long exposure", "tunnel light trails", "desert road dusk", "car taillights night"],
+  hazy:        ["foggy field", "misty forest", "faded landscape haze", "morning mist meadow"],
+  login:       ["empty concert hall", "vinyl record close up", "dim stage lights", "record player dark"],
+  profile:     ["analog mixing console", "reel to reel tape", "recording studio dark", "synthesizer close up"],
+  loading:     ["light leak abstract", "bokeh out of focus", "abstract blur warm"],
+};
+async function getPhoto(slot, env) {
+  if (!env.UNSPLASH_ACCESS_KEY) return { ok: false, reason: "no key" };
+  const list = PHOTO_QUERIES[slot] || PHOTO_QUERIES.serene;
+  const query = list[Math.floor(Math.random() * list.length)];
+  const u = new URL("https://api.unsplash.com/photos/random");
+  u.searchParams.set("query", query);
+  u.searchParams.set("orientation", "landscape");
+  u.searchParams.set("content_filter", "high");
+  const r = await fetch(u, { headers: { Authorization: "Client-ID " + env.UNSPLASH_ACCESS_KEY, "Accept-Version": "v1" } });
+  if (!r.ok) return { ok: false, reason: "unsplash " + r.status };
+  const d = await r.json();
+  // Unsplash guidelines: trigger the download endpoint when a photo is used, and credit the photographer
+  if (d.links?.download_location) fetch(d.links.download_location, { headers: { Authorization: "Client-ID " + env.UNSPLASH_ACCESS_KEY } }).catch(() => {});
+  const utm = "?utm_source=music_discovery&utm_medium=referral";
+  return {
+    ok: true, slot, query,
+    url: d.urls.raw + "&w=2000&q=80&fm=jpg&fit=max",
+    color: d.color || null,
+    photographer: d.user?.name || "Unknown",
+    photographerUrl: (d.user?.links?.html || "https://unsplash.com") + utm,
+    photoUrl: (d.links?.html || "https://unsplash.com") + utm,
+  };
 }
 
 /* ------------------------------------------------------------------
