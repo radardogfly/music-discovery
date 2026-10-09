@@ -329,6 +329,42 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
   .mobile-only { display: flex; }
 }
 
+.takeaway { font-family: var(--serif); font-size: clamp(20px, 2.4vw, 28px); line-height: 1.3; max-width: 34ch; margin-bottom: 36px; }
+
+.orbit-wrap { display: grid; grid-template-columns: minmax(300px, 640px) 1fr; gap: 48px; align-items: center; }
+.orbit { position: relative; aspect-ratio: 1; width: 100%; }
+.orbit svg.rings { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.orbit svg.rings circle { fill: none; stroke: var(--ink-faint); stroke-width: 1; }
+.orbit svg.rings line { stroke: var(--ink-faint); stroke-width: 1; stroke-dasharray: 2 4; }
+.orbit svg.rings text { font: 500 9px/1 var(--sans); letter-spacing: 0.14em; text-transform: uppercase; fill: var(--ink-muted); }
+.orbit .node {
+  position: absolute; transform: translate(-50%, -50%); border-radius: 50%; overflow: hidden;
+  width: var(--sz); height: var(--sz); cursor: pointer; padding: 0;
+  box-shadow: 0 0 0 2px var(--paper); transition: transform 300ms var(--ease), box-shadow 300ms var(--ease), opacity 300ms var(--ease);
+}
+.orbit .node .photo { width: 100%; height: 100%; border-radius: 50%; }
+.orbit .node:hover, .orbit .node.on { transform: translate(-50%, -50%) scale(1.18); box-shadow: 0 0 0 2px var(--ink); z-index: 3; }
+.orbit.has-focus .node:not(.on) { opacity: 0.4; }
+.orbit .node { aspect-ratio: 1; height: auto; }
+.orbit-card { min-height: 140px; }
+.orbit-card .nm { font-family: var(--serif); font-size: 32px; line-height: 1.1; }
+.orbit-card .grp { margin: 6px 0 18px; }
+.orbit-card table { border-collapse: collapse; font-size: 14px; }
+.orbit-card td { padding: 6px 24px 6px 0; border-bottom: 1px solid var(--ink-faint); }
+.orbit-card td:last-child { font-variant-numeric: tabular-nums; text-align: right; padding-right: 0; }
+.orbit-key { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gutter); margin-top: 40px; }
+.orbit-key .label { color: var(--ink); display: block; margin-bottom: 6px; }
+.orbit-key p { font-size: 13px; color: var(--ink-muted); }
+@media (max-width: 900px) {
+  .orbit-wrap { grid-template-columns: 1fr; gap: 24px; }
+  .orbit-key { grid-template-columns: 1fr; gap: 14px; }
+}
+
+.diary-status { font-size: 14px; color: var(--ink-muted); max-width: 62ch; }
+.diary-status .big { font-family: var(--serif); font-size: clamp(28px, 3.4vw, 40px); color: var(--ink); line-height: 1.15; margin-bottom: 10px; }
+.diary-status .track { height: 2px; background: var(--ink-faint); margin-top: 18px; max-width: 420px; }
+.diary-status .track div { height: 100%; background: var(--ink); }
+
 .erabar { display: flex; height: 44px; gap: 2px; }
 .erabar .era { position: relative; background: var(--ink); opacity: 0.9; min-width: 2px; }
 .erabar .era:nth-child(even) { opacity: 0.55; }
@@ -376,6 +412,7 @@ html { -webkit-tap-highlight-color: transparent; }
   <ul>
     <li><button data-view="discover" class="active">Discover</button></li>
     <li><button data-view="taste">Taste</button></li>
+    <li><button data-view="diary">Diary</button></li>
     <li><button data-view="history">History</button></li>
     <li><button class="signout" id="signout">Sign out</button></li>
   </ul>
@@ -456,6 +493,44 @@ html { -webkit-tap-highlight-color: transparent; }
 
     <div class="container section" style="padding-top:0">
       <div class="section-head">
+        <h2>Core, orbit, passing</h2>
+      </div>
+      <p class="takeaway" id="orbit-takeaway"></p>
+      <div class="orbit-wrap">
+        <div class="orbit" id="orbit" role="img" aria-label="Your artists arranged by how long they have stayed in your listening"></div>
+        <div class="orbit-card" id="orbit-card" aria-live="polite"></div>
+      </div>
+      <div class="orbit-key">
+        <div><span class="label">Core</span><p>In your top artists for four weeks, six months and all time. Your constants.</p></div>
+        <div><span class="label">Orbit</span><p>In two of the three. Rising on the right, drifting away on the left.</p></div>
+        <div><span class="label">Passing</span><p>In only one. New this month on the right, faded on the left.</p></div>
+      </div>
+    </div>
+
+    <div class="container section" style="padding-top:0">
+      <div class="section-head"><h2 style="font-size:clamp(24px,3vw,36px)">Eras</h2></div>
+      <div class="erabar" id="erabar"></div>
+    </div>
+  </section>
+
+  <!-- Diary -->
+  <section class="view" data-view="diary">
+    <div id="diary-hero" class="hero photo leak mood-euphoric">
+      <div class="fill"></div>
+      <div class="tint"></div>
+      <div class="copy">
+        <h1>When you listen.</h1>
+        <p id="diary-sub">Your listening, by the hour, the week and the year.</p>
+      </div>
+      <div class="scroll"></div>
+    </div>
+
+    <div class="container section">
+      <div class="diary-status" id="diary-status"></div>
+    </div>
+
+    <div class="container section" style="padding-top:0">
+      <div class="section-head">
         <h2>Top ten</h2>
         <div class="seg" id="top-kind" role="tablist" aria-label="Artists or tracks">
           <button data-k="artists" role="tab" class="active" aria-selected="true">Artists</button>
@@ -471,10 +546,6 @@ html { -webkit-tap-highlight-color: transparent; }
       <p class="muted" style="font-size:12px;margin-top:20px">Chevrons compare each window with the longer one beside it. New means absent from the longer window entirely.</p>
     </div>
 
-    <div class="container section" style="padding-top:0">
-      <div class="section-head"><h2 style="font-size:clamp(24px,3vw,36px)">Eras</h2></div>
-      <div class="erabar" id="erabar"></div>
-    </div>
   </section>
 
   <!-- History -->
@@ -676,7 +747,7 @@ function saveDiary() {
     duration_ms: i.track.duration_ms, image_url: i.track.album?.images?.[2]?.url || i.track.album?.images?.[0]?.url || "",
   }));
   if (!items.length) return;
-  Api.savePlays(items).then(r => { state.diary = { total: r.total, since: r.since }; }).catch(e => console.warn("diary", e));
+  Api.savePlays(items).then(r => { state.diary = { total: r.total, since: r.since }; renderDiaryStatus(); }).catch(e => console.warn("diary", e));
 }
 
 // Replace Spotify's thinning genre arrays with stored Claude labels on every full artist object we hold.
@@ -1055,8 +1126,105 @@ function renderEras() {
   $("#erabar").innerHTML = eras.map(([d, w]) => `<div class="era ${w < 0.11 ? "narrow" : ""}" style="flex:${Math.max(w, 0.005)}"><span>${d} <span class="muted">${Math.round(w * 100)}%</span></span></div>`).join("");
 }
 
+/* Core, orbit, passing: artists placed by how many of Spotify's three windows they appear in. */
+function renderOrbit() {
+  const T = state.raw.topArtists;
+  const rank = { short: new Map(), medium: new Map(), long: new Map() };
+  const byId = new Map();
+  for (const w of ["short", "medium", "long"]) (T[w] || []).forEach((a, i) => { rank[w].set(a.id, i + 1); if (!byId.has(a.id)) byId.set(a.id, a); });
+  const people = [...byId.values()].map(a => {
+    const r = { short: rank.short.get(a.id), medium: rank.medium.get(a.id), long: rank.long.get(a.id) };
+    const n = (r.short ? 1 : 0) + (r.medium ? 1 : 0) + (r.long ? 1 : 0);
+    const best = Math.min(r.short || 99, r.medium || 99, r.long || 99);
+    let group, side;
+    if (n === 3) { group = "core"; side = "all"; }
+    else if (n === 2) { group = "orbit"; side = r.long && !r.short ? "left" : "right"; }
+    else { group = "passing"; side = r.short ? "right" : r.long ? "left" : (r.medium ? "right" : "left"); }
+    return { a, r, n, best, group, side };
+  }).sort((x, y) => x.best - y.best);
+
+  const core = people.filter(p => p.group === "core").slice(0, 10);
+  const orb = { right: people.filter(p => p.group === "orbit" && p.side === "right").slice(0, 8), left: people.filter(p => p.group === "orbit" && p.side === "left").slice(0, 8) };
+  const pas = { right: people.filter(p => p.group === "passing" && p.side === "right").slice(0, 11), left: people.filter(p => p.group === "passing" && p.side === "left").slice(0, 11) };
+
+  // radii as % of the square, measured from the centre
+  const R = { core: 15, orbit: 30, passing: 44 };
+  const place = [];
+  const MAX = { core: 10, orbitn: 8, passing: 6.5 };
+  const ring = (list, r, from, to, cls) => {
+    const n = list.length; if (!n) return;
+    // face size (% of width) so neighbours never touch: 78% of the arc length available per face
+    const arc = 2 * Math.PI * Math.max(r, 1) * (Math.abs(to - from) / 360);
+    const sz = r === 0 ? MAX[cls] : Math.max(3.6, Math.min(MAX[cls], 0.78 * arc / n));
+    list.forEach((p, i) => {
+      const t = n === 1 ? (from + to) / 2 : from + (to - from) * (i + 0.5) / n;
+      const rad = t * Math.PI / 180;
+      place.push({ p, x: 50 + r * Math.cos(rad), y: 50 + r * Math.sin(rad), cls, sz });
+    });
+  };
+  ring(core, core.length <= 1 ? 0 : R.core, -90, 270, "core");
+  ring(orb.right, R.orbit, -78, 78, "orbitn");
+  ring(orb.left, R.orbit, 102, 258, "orbitn");
+  ring(pas.right, R.passing, -80, 80, "passing");
+  ring(pas.left, R.passing, 100, 260, "passing");
+
+  const label = (txt, r, ang) => { const rad = ang * Math.PI / 180; return `<text x="${(50 + r * Math.cos(rad)).toFixed(1)}%" y="${(50 + r * Math.sin(rad)).toFixed(1)}%" text-anchor="middle" dominant-baseline="middle">${txt}</text>`; };
+  const svg = `<svg class="rings" aria-hidden="true">
+    <circle cx="50%" cy="50%" r="${R.core}%"></circle><circle cx="50%" cy="50%" r="${R.orbit}%"></circle><circle cx="50%" cy="50%" r="${R.passing}%"></circle>
+    <line x1="50%" y1="2%" x2="50%" y2="98%"></line>
+    ${label("Core", R.core + 7.5, -90)}${label("Orbit", R.orbit + 7.5, -90)}${label("Passing", R.passing + 5, -90)}
+    ${label("Fading", R.passing + 5, 180)}${label("New", R.passing + 4, 0)}
+  </svg>`;
+  const nodes = place.map(({ p, x, y, cls, sz }) => {
+    const img = p.a.images?.[2]?.url || p.a.images?.[1]?.url || p.a.images?.[0]?.url || "";
+    return `<button class="node ${cls}" style="left:${x.toFixed(2)}%;top:${y.toFixed(2)}%;--sz:${sz.toFixed(2)}%" data-id="${esc(p.a.id)}" aria-label="${esc(p.a.name)}">
+      <div class="photo mood-serene" style="--grain:0.08">${img ? `<img src="${esc(img)}" alt="" loading="lazy">` : `<div class="fill"></div>`}<div class="tint"></div></div></button>`;
+  }).join("");
+  const box = $("#orbit"); box.innerHTML = svg + nodes; box.classList.remove("has-focus");
+
+  const groupName = p => p.group === "core" ? "Core" : p.group === "orbit" ? (p.side === "right" ? "Orbit, rising" : "Orbit, drifting") : (p.side === "right" ? "Passing, new" : "Passing, faded");
+  const card = $("#orbit-card");
+  const idle = () => {
+    const lead = core[0] || people[0];
+    card.innerHTML = lead ? `<span class="label muted">Tap or hover any face</span><p style="margin-top:10px;font-size:14px;color:var(--ink-muted)">Each one shows where that artist ranks in each of Spotify's three windows.</p>` : "";
+  };
+  const show = id => {
+    const p = people.find(x => x.a.id === id); if (!p) return;
+    box.classList.add("has-focus"); $$(".node", box).forEach(n => n.classList.toggle("on", n.dataset.id === id));
+    const cell = v => v ? `#${v}` : `<span class="muted">not in top 50</span>`;
+    card.innerHTML = `<div class="nm">${esc(p.a.name)}</div><div class="label grp muted">${groupName(p)}</div>
+      <table><tr><td>Four weeks</td><td>${cell(p.r.short)}</td></tr><tr><td>Six months</td><td>${cell(p.r.medium)}</td></tr><tr><td>All time</td><td>${cell(p.r.long)}</td></tr></table>`;
+  };
+  const clear = () => { box.classList.remove("has-focus"); $$(".node.on", box).forEach(n => n.classList.remove("on")); idle(); };
+  idle();
+  $$(".node", box).forEach(n => {
+    n.addEventListener("mouseenter", () => show(n.dataset.id));
+    n.addEventListener("focus", () => show(n.dataset.id));
+    n.addEventListener("click", e => { e.stopPropagation(); n.classList.contains("on") ? clear() : show(n.dataset.id); });
+  });
+  box.addEventListener("mouseleave", clear);
+
+  const coreAll = people.filter(p => p.group === "core").length;
+  const fresh = people.filter(p => p.group === "passing" && p.side === "right").length;
+  const faded = people.filter(p => p.group === "passing" && p.side === "left").length;
+  $("#orbit-takeaway").textContent = !people.length ? "Not enough listening history yet." :
+    `${coreAll ? `${coreAll} ${coreAll === 1 ? "artist has" : "artists have"} stayed with you through everything.` : "No artist has stayed in all three windows yet."} ${fresh ? `${fresh} ${fresh === 1 ? "is" : "are"} new this month` : "None are new this month"}${faded ? `, and ${faded} ${faded === 1 ? "has" : "have"} drifted out of view.` : ", and nobody has drifted away."}`;
+}
+
+function renderDiaryStatus() {
+  const d = state.diary; const box = $("#diary-status"); if (!box) return;
+  if (!d || !d.since) { box.innerHTML = `<div class="big">Your diary starts today.</div>Every time you open the app, your most recent plays are saved here. The clock and the week, month and year charts fill in as it grows.`; return; }
+  const start = new Date(d.since), days = Math.max(0, Math.floor((Date.now() - start) / 86400000));
+  const nice = start.toLocaleDateString(undefined, { day: "numeric", month: "long" });
+  const weekReady = new Date(start.getTime() + 7 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "long" });
+  const pct = Math.min(100, Math.round(days / 7 * 100));
+  box.innerHTML = `<div class="big">${d.total.toLocaleString()} plays saved since ${nice}.</div>
+    ${days < 7 ? `The week view fills in on ${weekReady}. Until then, the top ten below uses Spotify's own windows.` : `The top ten below still uses Spotify's windows; your own week, month and year charts arrive next.`}
+    <div class="track" aria-hidden="true"><div style="width:${pct}%"></div></div>`;
+}
+
 function renderTaste() {
-  renderRecord(); renderTopTen(); renderEras();
+  renderRecord(); renderOrbit(); renderTopTen(); renderEras(); renderDiaryStatus();
   const recent = genreShares("short")[0], all = genreShares("long")[0];
   const sub = $("#taste-sub");
   if (recent && all) sub.textContent = recent.genre === all.genre
@@ -1134,6 +1302,7 @@ async function boot() {
     renderTaste();
     setPhoto($("#taste-hero"), "profile");
     setPhoto($("#history-hero"), "history");
+    setPhoto($("#diary-hero"), "diary");
     await loadHistory();
     await loadShelf();
     updateNav();
