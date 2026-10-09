@@ -773,7 +773,8 @@ const Auth = {
     const exp = Number(localStorage.getItem("sp_expires") || 0);
     if (localStorage.getItem("sp_access") && Date.now() < exp) {
       state.token = localStorage.getItem("sp_access");
-      if (!localStorage.getItem("device_key") && localStorage.getItem("sp_refresh")) Auth.refresh().catch(() => {});
+      // a browser from before device keys existed: finish linking before anything else talks to the Worker
+      if (!localStorage.getItem("device_key") && localStorage.getItem("sp_refresh")) { try { await Auth.refresh(); } catch {} }
       return true;
     }
     return Auth.refresh();
@@ -933,13 +934,19 @@ function buildProfile() {
    ================================================================== */
 const Api = {
   headers(extra = {}) { const k = Auth.deviceKey(); return k ? { Authorization: "Bearer " + k, ...extra } : extra; },
+  relogin() {
+    if (Api._relogin) return; Api._relogin = true;
+    Auth.clear(); notice("Please connect Spotify again.", 6000); setTimeout(() => location.reload(), 1200);
+  },
   async post(path, body) {
     const r = await fetch(CONFIG.API_BASE + path, { method: "POST", headers: Api.headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+    if (r.status === 401) Api.relogin();
     if (!r.ok) throw new Error(`API ${r.status} on ${path}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
     return r.json();
   },
   async get(path) {
     const r = await fetch(CONFIG.API_BASE + path, { headers: Api.headers() });
+    if (r.status === 401) Api.relogin();
     if (!r.ok) throw new Error(`API ${r.status} on ${path}`);
     return r.json();
   },
