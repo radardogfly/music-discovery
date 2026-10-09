@@ -272,9 +272,6 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 /* ------------------------------------------------------------------
    8. Taste: record chart, top ten, eras
    ------------------------------------------------------------------ */
-.profile-head { height: 50vh; min-height: 320px; display: grid; align-content: end; color: #F4F1EB; }
-.profile-head .copy { position: relative; z-index: 5; padding: 0 var(--margin) 48px; }
-.profile-head h1 { font-size: clamp(40px, 6vw, 72px); }
 
 /* categorical palette, validated for both surfaces; genre slot i takes --g(i) in fixed order */
 :root {
@@ -428,10 +425,14 @@ html { -webkit-tap-highlight-color: transparent; }
 
   <!-- Taste -->
   <section class="view" data-view="taste">
-    <div class="profile-head photo mood-serene">
-      <img src="assets/photos/profile.jpg" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'fill'}))">
+    <div id="taste-hero" class="hero photo leak mood-serene">
+      <div class="fill"></div>
       <div class="tint"></div>
-      <div class="copy"><h1>What you return to.</h1></div>
+      <div class="copy">
+        <h1>What you return to.</h1>
+        <p id="taste-sub">Your listening, by genre and by window.</p>
+      </div>
+      <div class="scroll"></div>
     </div>
 
     <div class="container section">
@@ -478,7 +479,16 @@ html { -webkit-tap-highlight-color: transparent; }
 
   <!-- History -->
   <section class="view" data-view="history">
-    <div class="container section" style="padding-top:140px">
+    <div id="history-hero" class="hero photo leak mood-hazy">
+      <div class="fill"></div>
+      <div class="tint"></div>
+      <div class="copy">
+        <h1>Everything so far.</h1>
+        <p id="history-sub">Every artist the app has put in front of you.</p>
+      </div>
+      <div class="scroll"></div>
+    </div>
+    <div class="container section">
       <div class="section-head"><h2>History</h2></div>
       <div class="filters" id="filters">
         <button data-f="all" class="active">All</button>
@@ -1015,7 +1025,14 @@ function renderEras() {
   $("#erabar").innerHTML = eras.map(([d, w]) => `<div class="era ${w < 0.11 ? "narrow" : ""}" style="flex:${Math.max(w, 0.005)}"><span>${d} <span class="muted">${Math.round(w * 100)}%</span></span></div>`).join("");
 }
 
-function renderTaste() { renderRecord(); renderTopTen(); renderEras(); }
+function renderTaste() {
+  renderRecord(); renderTopTen(); renderEras();
+  const recent = genreShares("short")[0], all = genreShares("long")[0];
+  const sub = $("#taste-sub");
+  if (recent && all) sub.textContent = recent.genre === all.genre
+    ? `Mostly ${recent.genre}, this month and always.`
+    : `Mostly ${recent.genre} this month; ${all.genre} over the years.`;
+}
 
 $$("#genre-range button").forEach(b => b.addEventListener("click", () => {
   taste.range = b.dataset.r; $$("#genre-range button").forEach(x => { x.classList.toggle("active", x === b); x.setAttribute("aria-selected", x === b); }); renderRecord();
@@ -1036,6 +1053,8 @@ async function loadHistory() {
   renderHistory();
 }
 function renderHistory() {
+  const kept = state.history.filter(h => h.verdict === "up").length, passed = state.history.filter(h => h.verdict === "down").length;
+  const hs = $("#history-sub"); if (hs && state.history.length) hs.textContent = `${state.history.length} shown, ${kept} kept, ${passed} passed.`;
   const rows = state.history.filter(h => state.filter === "all" || (state.filter === "unrated" ? !h.verdict : h.verdict === state.filter));
   show($("#hist-empty"), rows.length === 0);
   $("#hist").innerHTML = rows.map(h => `
@@ -1058,8 +1077,8 @@ function switchView(name) {
 }
 function updateNav() {
   const nav = $("#nav");
-  const onDiscover = $(".view.active")?.dataset.view === "discover";
-  const onHero = onDiscover && window.scrollY < window.innerHeight - 64;
+  const hasHero = !!$(".view.active .hero");
+  const onHero = hasHero && window.scrollY < window.innerHeight - 64;
   nav.classList.toggle("on-hero", onHero);
   nav.classList.toggle("solid", !onHero);
 }
@@ -1081,7 +1100,8 @@ async function boot() {
     buildProfile();
     show($("#app"), true); show($("#nav"), true);
     renderTaste();
-    setPhoto($(".profile-head"), "profile");
+    setPhoto($("#taste-hero"), "profile");
+    setPhoto($("#history-hero"), "history");
     await loadHistory();
     await loadShelf();
     updateNav();

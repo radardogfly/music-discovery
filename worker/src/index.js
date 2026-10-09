@@ -144,6 +144,7 @@ const PHOTO_QUERIES = {
   login:       ["empty concert hall", "vinyl record close up", "dim stage lights", "record player dark"],
   profile:     ["analog mixing console", "reel to reel tape", "recording studio dark", "synthesizer close up"],
   loading:     ["light leak abstract", "bokeh out of focus", "abstract blur warm"],
+  history:     ["record shelf", "archive boxes dim light", "old photographs table", "vinyl crates record store"],
 };
 async function getPhoto(slot, env) {
   if (!env.UNSPLASH_ACCESS_KEY) return { ok: false, reason: "no key" };
