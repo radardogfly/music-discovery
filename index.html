@@ -365,12 +365,6 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 .diary-status .track { height: 2px; background: var(--ink-faint); margin-top: 18px; max-width: 420px; }
 .diary-status .track div { height: 100%; background: var(--ink); }
 
-.erabar { display: flex; height: 44px; gap: 2px; }
-.erabar .era { position: relative; background: var(--ink); opacity: 0.9; min-width: 2px; }
-.erabar .era:nth-child(even) { opacity: 0.55; }
-.erabar .era span { position: absolute; left: 0; top: calc(100% + 8px); font-family: var(--serif); font-size: 14px; white-space: nowrap; color: var(--ink); }
-.erabar .era.narrow span { display: none; }
-.erabar .era:hover span { display: block; }
 
 /* ------------------------------------------------------------------
    10. History
@@ -507,10 +501,6 @@ html { -webkit-tap-highlight-color: transparent; }
       </div>
     </div>
 
-    <div class="container section" style="padding-top:0">
-      <div class="section-head"><h2 style="font-size:clamp(24px,3vw,36px)">Eras</h2></div>
-      <div class="erabar" id="erabar"></div>
-    </div>
   </section>
 
   <!-- Diary -->
@@ -1121,10 +1111,6 @@ function renderTopTen() {
   $("#topten").innerHTML = col("short") + col("medium") + col("long");
 }
 
-function renderEras() {
-  const eras = Object.entries(state.eras || {});
-  $("#erabar").innerHTML = eras.map(([d, w]) => `<div class="era ${w < 0.11 ? "narrow" : ""}" style="flex:${Math.max(w, 0.005)}"><span>${d} <span class="muted">${Math.round(w * 100)}%</span></span></div>`).join("");
-}
 
 /* Core, orbit, passing: artists placed by how many of Spotify's three windows they appear in. */
 function renderOrbit() {
@@ -1224,7 +1210,7 @@ function renderDiaryStatus() {
 }
 
 function renderTaste() {
-  renderRecord(); renderOrbit(); renderTopTen(); renderEras(); renderDiaryStatus();
+  renderRecord(); renderOrbit(); renderTopTen(); renderDiaryStatus();
   const recent = genreShares("short")[0], all = genreShares("long")[0];
   const sub = $("#taste-sub");
   if (recent && all) sub.textContent = recent.genre === all.genre
