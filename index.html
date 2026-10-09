@@ -360,6 +360,44 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
   .orbit-key { grid-template-columns: 1fr; gap: 14px; }
 }
 
+.clock-wrap { display: grid; grid-template-columns: minmax(280px, 460px) 1fr; gap: 56px; align-items: center; }
+.clock { position: relative; aspect-ratio: 480 / 440; }
+.clock svg { width: 100%; height: 100%; display: block; }
+.clock .bar { fill: var(--ink); opacity: 0.85; transition: opacity 200ms; }
+.clock .bar.peak { fill: var(--g1); opacity: 1; }
+.clock .hit { fill: transparent; cursor: pointer; }
+.clock.has-focus .bar:not(.on) { opacity: 0.25; }
+.clock .face { fill: none; stroke: var(--ink-faint); stroke-width: 1; }
+.clock .tick { stroke: var(--ink-faint); stroke-width: 1; }
+.clock text { font: 500 10px/1 var(--sans); letter-spacing: 0.12em; fill: var(--ink-muted); }
+.clock-centre { position: absolute; left: 0; right: 0; top: 0; height: 100%; display: grid; place-items: center; text-align: center; pointer-events: none; padding: 0 33%; }
+.clock-centre .big { font-family: var(--serif); font-size: clamp(26px, 3.6vw, 40px); line-height: 1; }
+.clock-centre .who { font-size: 11px; color: var(--ink-muted); margin-top: 6px; line-height: 1.4; }
+.weekdays { display: grid; gap: 8px; max-width: 420px; }
+.weekday { display: grid; grid-template-columns: 40px 1fr 44px; gap: 12px; align-items: center; font-size: 13px; }
+.weekday .d { color: var(--ink-muted); }
+.weekday .b { height: 10px; background: var(--ink); border-radius: 0 4px 4px 0; min-width: 2px; }
+.weekday.peak .b { background: var(--g1); }
+.weekday .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+
+.rings-wrap { display: grid; grid-template-columns: minmax(300px, 680px) 1fr; gap: 48px; align-items: center; }
+.rings-fig svg { width: 100%; height: auto; display: block; }
+.rings-fig .yr { fill: none; stroke: var(--ink-faint); stroke-width: 0.6; }
+.rings-fig .dot { fill: var(--ink); }
+.rings-fig .seg-hit { fill: transparent; cursor: pointer; }
+.rings-fig .seg-hit.on { fill: var(--g1); fill-opacity: 0.18; }
+.rings-fig text { font: 500 9px/1 var(--sans); letter-spacing: 0.12em; text-transform: uppercase; fill: var(--ink-muted); }
+.rings-fig text.y { font-family: var(--serif); font-size: 11px; letter-spacing: 0; text-transform: none; fill: var(--ink); }
+.rings-card { min-height: 140px; }
+.rings-card .nm { font-family: var(--serif); font-size: 32px; line-height: 1.1; }
+.rings-card .cnt { margin: 6px 0 16px; }
+.rings-card ol { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.rings-card li { display: grid; grid-template-columns: 1fr auto; gap: 16px; font-size: 14px; border-bottom: 1px solid var(--ink-faint); padding-bottom: 6px; }
+.rings-card li span:last-child { color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 900px) {
+  .clock-wrap, .rings-wrap { grid-template-columns: 1fr; gap: 28px; }
+}
+
 .diary-status { font-size: 14px; color: var(--ink-muted); max-width: 62ch; }
 .diary-status .big { font-family: var(--serif); font-size: clamp(28px, 3.4vw, 40px); color: var(--ink); line-height: 1.15; margin-bottom: 10px; }
 .diary-status .track { height: 2px; background: var(--ink-faint); margin-top: 18px; max-width: 420px; }
@@ -520,8 +558,30 @@ html { -webkit-tap-highlight-color: transparent; }
     </div>
 
     <div class="container section" style="padding-top:0">
+      <div class="section-head"><h2>Your day</h2></div>
+      <p class="takeaway" id="clock-takeaway"></p>
+      <div class="clock-wrap">
+        <figure class="clock" style="margin:0">
+          <svg id="clock-svg" viewBox="-40 -20 480 440" role="img" aria-label="Plays by hour of the day"></svg>
+          <div class="clock-centre" id="clock-centre"></div>
+        </figure>
+        <div>
+          <span class="label muted" style="display:block;margin-bottom:14px">By day of the week</span>
+          <div class="weekdays" id="weekdays"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="container section" style="padding-top:0">
       <div class="section-head">
         <h2>Top ten</h2>
+        <div class="seg" id="top-source" role="tablist" aria-label="Source">
+          <button data-s="diary" role="tab">Your diary</button>
+          <button data-s="spotify" role="tab">Spotify</button>
+        </div>
+      </div>
+      <div class="section-head" style="margin-top:-18px;margin-bottom:24px">
+        <span></span>
         <div class="seg" id="top-kind" role="tablist" aria-label="Artists or tracks">
           <button data-k="artists" role="tab" class="active" aria-selected="true">Artists</button>
           <button data-k="tracks" role="tab">Tracks</button>
@@ -533,7 +593,19 @@ html { -webkit-tap-highlight-color: transparent; }
         <button data-r="long" role="tab">All time</button>
       </div>
       <div class="topten" id="topten"></div>
-      <p class="muted" style="font-size:12px;margin-top:20px">Chevrons compare each window with the longer one beside it. New means absent from the longer window entirely.</p>
+      <p class="muted" id="topten-note" style="font-size:12px;margin-top:20px">Chevrons compare each window with the longer one beside it. New means absent from the longer window entirely.</p>
+    </div>
+
+    <div class="container section" style="padding-top:0">
+      <div class="section-head"><h2>All your years</h2></div>
+      <p class="takeaway" id="rings-takeaway">Reading your library.</p>
+      <div class="rings-wrap">
+        <figure class="rings-fig" style="margin:0">
+          <svg id="rings-svg" viewBox="-10 -10 620 620" role="img" aria-label="Every saved song, by the date you saved it"></svg>
+        </figure>
+        <div class="rings-card" id="rings-card" aria-live="polite"></div>
+      </div>
+      <p class="muted" style="font-size:12px;margin-top:20px">One dot per saved song, at the moment you saved it. Each ring is a year, oldest at the centre; the months run clockwise from the top.</p>
     </div>
 
   </section>
@@ -1015,7 +1087,8 @@ async function commitFeedback(el, r) {
    TASTE
    ================================================================== */
 const RANGE_LABEL = { short: "Four weeks", medium: "Six months", long: "All time" };
-const taste = { range: "long", kind: "artists", mobileRange: "short", focus: null };
+const taste = { range: "long", kind: "artists", mobileRange: "short", focus: null, source: "spotify" };
+const diary = { loaded: false, plays: [], total: 0, since: null, library: null, libraryLoading: false };
 
 /* Genre shares for one window: each top artist contributes its rank weight to each of its genres. */
 function genreShares(range) {
@@ -1079,9 +1152,40 @@ function renderRecord() {
   });
 }
 
+/* Diary-based windows shaped like Spotify's lists, so the same renderer draws both. */
+const DIARY_LABEL = { short: "This week", medium: "This month", long: "This year" };
+function diaryLists(kind) {
+  const plays = diary.plays || [];
+  const now = Date.now(), days = { short: 7, medium: 30, long: 365 };
+  const artistImg = new Map();
+  [...state.raw.topArtists.long, ...state.raw.topArtists.medium, ...state.raw.topArtists.short, ...state.raw.following]
+    .forEach(a => { if (a?.id && !artistImg.has(a.id)) artistImg.set(a.id, a.images?.[2]?.url || a.images?.[1]?.url || a.images?.[0]?.url || ""); });
+  const out = {};
+  for (const [w, d] of Object.entries(days)) {
+    const cut = now - d * 86400000, m = new Map();
+    plays.forEach(p => {
+      if (new Date(p.played_at).getTime() < cut) return;
+      const k = kind === "artists" ? (p.artist_id || p.artist_name) : (p.track_id || p.track_name + "|" + p.artist_name);
+      const cur = m.get(k) || (kind === "artists"
+        ? { id: k, name: p.artist_name, images: [{ url: artistImg.get(p.artist_id) || p.image_url || "" }], plays: 0 }
+        : { id: k, name: p.track_name, artists: [{ name: p.artist_name }], album: { images: [{ url: p.image_url || "" }] }, plays: 0 });
+      cur.plays++; m.set(k, cur);
+    });
+    out[w] = [...m.values()].sort((a, b) => b.plays - a.plays || a.name.localeCompare(b.name));
+  }
+  return out;
+}
+
 function renderTopTen() {
   const kind = taste.kind;
-  const src = kind === "artists" ? state.raw.topArtists : state.raw.topTracks;
+  const fromDiary = taste.source === "diary";
+  const src = fromDiary ? diaryLists(kind) : (kind === "artists" ? state.raw.topArtists : state.raw.topTracks);
+  const LABEL = fromDiary ? DIARY_LABEL : RANGE_LABEL;
+  $$("#top-range button").forEach(b => b.textContent = LABEL[b.dataset.r]);
+  const note = $("#topten-note");
+  if (note) note.textContent = fromDiary
+    ? `Counted from ${(diary.total || 0).toLocaleString()} plays saved since ${diary.since ? new Date(diary.since).toLocaleDateString(undefined, { day: "numeric", month: "long" }) : "today"}. Windows that reach back before then only count what the diary has. Chevrons compare with the longer window beside it.`
+    : "Spotify's own windows. Chevrons compare each window with the longer one beside it. New means absent from the longer window entirely.";
   const key = x => kind === "artists" ? x.id : (x.id || x.name + "|" + (x.artists?.[0]?.name || ""));
   const ranks = {};
   for (const r of ["short", "medium", "long"]) ranks[r] = new Map((src[r] || []).map((x, i) => [key(x), i + 1]));
@@ -1089,7 +1193,8 @@ function renderTopTen() {
   const col = range => {
     const rows = (src[range] || []).slice(0, 10).map((x, i) => {
       const image = kind === "artists" ? (x.images?.[2]?.url || x.images?.[1]?.url || "") : (x.album?.images?.[2]?.url || x.album?.images?.[1]?.url || "");
-      const sub = kind === "artists" ? (x.genres?.[0] || "") : (x.artists || []).map(a => a.name).join(", ");
+      const sub = x.plays ? `${x.plays} ${x.plays === 1 ? "play" : "plays"}${kind === "tracks" ? " · " + (x.artists || []).map(a => a.name).join(", ") : ""}`
+        : kind === "artists" ? (x.genres?.[0] || "") : (x.artists || []).map(a => a.name).join(", ");
       let mv = "";
       const L = longer[range];
       if (L) {
@@ -1106,7 +1211,7 @@ function renderTopTen() {
         ${mv}
       </li>`;
     }).join("");
-    return `<div class="topcol ${range === taste.mobileRange ? "active" : ""}" data-r="${range}"><span class="label">${RANGE_LABEL[range]}</span><ol>${rows || `<li class="muted" style="font-size:13px">Nothing in this window.</li>`}</ol></div>`;
+    return `<div class="topcol ${range === taste.mobileRange ? "active" : ""}" data-r="${range}"><span class="label">${LABEL[range]}</span><ol>${rows || `<li class="muted" style="font-size:13px">Nothing in this window.</li>`}</ol></div>`;
   };
   $("#topten").innerHTML = col("short") + col("medium") + col("long");
 }
@@ -1197,15 +1302,153 @@ function renderOrbit() {
     `${coreAll ? `${coreAll} ${coreAll === 1 ? "artist has" : "artists have"} stayed with you through everything.` : "No artist has stayed in all three windows yet."} ${fresh ? `${fresh} ${fresh === 1 ? "is" : "are"} new this month` : "None are new this month"}${faded ? `, and ${faded} ${faded === 1 ? "has" : "have"} drifted out of view.` : ", and nobody has drifted away."}`;
 }
 
+/* ------------------------------------------------------------------
+   DIARY: loaded on first visit to the tab
+   ------------------------------------------------------------------ */
+async function openDiary() {
+  if (!diary.loaded) {
+    try {
+      const r = await Api.get("/plays");
+      diary.plays = r.items || []; diary.total = r.total || 0; diary.since = r.since; diary.loaded = true;
+      state.diary = { total: diary.total, since: diary.since };
+      if (!taste.userPickedSource) taste.source = diary.total >= 30 ? "diary" : "spotify";
+      $$("#top-source button").forEach(b => b.classList.toggle("active", b.dataset.s === taste.source));
+    } catch (e) { console.warn("diary load", e); }
+    renderDiaryStatus(); renderClock(); renderTopTen();
+  }
+  if (!diary.library && !diary.libraryLoading) loadLibrary();
+}
+
+function renderClock() {
+  const plays = diary.plays || [];
+  const svg = $("#clock-svg"), centre = $("#clock-centre"), take = $("#clock-takeaway"), fig = $(".clock");
+  if (plays.length < 10) {
+    svg.innerHTML = `<circle class="face" cx="200" cy="200" r="70"></circle><circle class="face" cx="200" cy="200" r="185"></circle>`;
+    centre.innerHTML = `<div><div class="who">The clock appears after a few days of listening.</div></div>`;
+    take.textContent = "Not enough plays yet to see your rhythm.";
+    $("#weekdays").innerHTML = ""; return;
+  }
+  const hours = Array(24).fill(0), wd = Array(7).fill(0);
+  plays.forEach(p => { const d = new Date(p.played_at); hours[d.getHours()]++; wd[(d.getDay() + 6) % 7]++; });
+  const max = Math.max(...hours), peak = hours.indexOf(max);
+  const cx = 200, cy = 200, r0 = 70, r1 = 185, step = 360 / 24, gap = 1.6;
+  const hrName = h => { const a = h % 12 || 12; return `${a} ${h < 12 ? "am" : "pm"}`; };
+  const sector = (h, rOut) => {
+    const a0 = (h * step - 90 + gap / 2) * Math.PI / 180, a1 = ((h + 1) * step - 90 - gap / 2) * Math.PI / 180;
+    const P = (r, a) => `${(cx + r * Math.cos(a)).toFixed(2)} ${(cy + r * Math.sin(a)).toFixed(2)}`;
+    return `M ${P(r0, a0)} L ${P(rOut, a0)} A ${rOut} ${rOut} 0 0 1 ${P(rOut, a1)} L ${P(r0, a1)} A ${r0} ${r0} 0 0 0 ${P(r0, a0)} Z`;
+  };
+  let out = `<circle class="face" cx="${cx}" cy="${cy}" r="${r0}"></circle><circle class="face" cx="${cx}" cy="${cy}" r="${r1}" stroke-dasharray="1 5"></circle>`;
+  hours.forEach((n, h) => {
+    if (n) out += `<path class="bar ${h === peak ? "peak" : ""}" data-h="${h}" d="${sector(h, r0 + 6 + (r1 - r0 - 6) * n / max)}"></path>`;
+  });
+  [[0, "midnight", "middle"], [6, "6 am", "start"], [12, "noon", "middle"], [18, "6 pm", "end"]].forEach(([h, t, anchor]) => {
+    const a = (h * step - 90) * Math.PI / 180, lr = r1 + 10;
+    out += `<text x="${(cx + lr * Math.cos(a)).toFixed(1)}" y="${(cy + lr * Math.sin(a)).toFixed(1)}" text-anchor="${anchor}" dominant-baseline="middle">${t.toUpperCase()}</text>`;
+  });
+  hours.forEach((n, h) => { out += `<path class="hit" data-h="${h}" d="${sector(h, r1)}"></path>`; });
+  svg.innerHTML = out;
+
+  const parts = { morning: [5, 12], afternoon: [12, 17], evening: [17, 22], night: [22, 29] };
+  const share = Object.fromEntries(Object.entries(parts).map(([k, [a, b]]) => {
+    let n = 0; for (let h = a; h < b; h++) n += hours[h % 24]; return [k, n / plays.length];
+  }));
+  const top = Object.entries(share).sort((a, b) => b[1] - a[1])[0];
+  const range = { morning: "between 5 am and noon", afternoon: "between noon and 5 pm", evening: "between 5 and 10 pm", night: "after 10 pm" }[top[0]];
+  const noun = { morning: "a morning", afternoon: "an afternoon", evening: "an evening", night: "a night" }[top[0]];
+  take.textContent = `You're ${noun} listener. ${Math.round(top[1] * 100)}% of your plays are ${range}.`;
+  const idle = () => centre.innerHTML = `<div><div class="big">${hrName(peak)}</div><div class="who">your busiest hour<br>${plays.length.toLocaleString()} plays counted</div></div>`;
+  idle();
+  $$(".hit", svg).forEach(el => {
+    const h = +el.dataset.h;
+    const on = () => { fig.classList.add("has-focus"); $$(".bar", svg).forEach(b => b.classList.toggle("on", +b.dataset.h === h));
+      centre.innerHTML = `<div><div class="big">${hours[h]}</div><div class="who">${hours[h] === 1 ? "play" : "plays"}, ${hrName(h)} to ${hrName((h + 1) % 24)}</div></div>`; };
+    el.addEventListener("mouseenter", on); el.addEventListener("click", on);
+  });
+  svg.addEventListener("mouseleave", () => { fig.classList.remove("has-focus"); idle(); });
+
+  const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], wmax = Math.max(...wd), wpk = wd.indexOf(wmax);
+  $("#weekdays").innerHTML = wd.map((n, i) => `<div class="weekday ${i === wpk ? "peak" : ""}"><span class="d">${names[i]}</span><div class="b" style="width:${wmax ? (n / wmax * 100).toFixed(1) : 0}%"></div><span class="n">${n}</span></div>`).join("");
+}
+
+/* Every saved song, paged from Spotify 50 at a time (a few requests in parallel). */
+async function loadLibrary() {
+  diary.libraryLoading = true;
+  try {
+    const first = await Spotify.get("/me/tracks", { limit: 50, offset: 0 });
+    const total = Math.min(first.total || 0, 6000);
+    const items = [...first.items];
+    const offsets = []; for (let o = 50; o < total; o += 50) offsets.push(o);
+    for (let i = 0; i < offsets.length; i += 4) {
+      $("#rings-takeaway").textContent = `Reading your library. ${Math.min(items.length, total).toLocaleString()} of ${total.toLocaleString()} songs.`;
+      const pages = await Promise.all(offsets.slice(i, i + 4).map(o => Spotify.get("/me/tracks", { limit: 50, offset: o }).catch(() => ({ items: [] }))));
+      pages.forEach(p => items.push(...(p.items || [])));
+    }
+    diary.library = items.filter(i => i.added_at && i.track).map(i => ({ at: new Date(i.added_at), name: i.track.name, artist: i.track.artists?.[0]?.name || "" }));
+  } catch (e) { console.warn("library", e); diary.library = []; }
+  diary.libraryLoading = false;
+  renderRings();
+}
+
+function renderRings() {
+  const lib = (diary.library || []).slice().sort((a, b) => a.at - b.at);
+  const svg = $("#rings-svg"), take = $("#rings-takeaway"), card = $("#rings-card");
+  if (!lib.length) { svg.innerHTML = ""; take.textContent = "No saved songs found in your library."; card.innerHTML = ""; return; }
+  const y0 = lib[0].at.getFullYear(), y1 = lib[lib.length - 1].at.getFullYear(), years = y1 - y0 + 1;
+  const cx = 300, cy = 300, rMin = 40, rMax = 262, band = (rMax - rMin) / years;
+  const yearStart = y => new Date(y, 0, 1).getTime(), yearLen = y => yearStart(y + 1) - yearStart(y);
+  const angOf = d => ((d.getTime() - yearStart(d.getFullYear())) / yearLen(d.getFullYear())) * 360 - 90;
+  // deterministic jitter so dots in a busy week spread across the band instead of stacking
+  const jit = (i, k) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x); };
+  const dotR = Math.max(1.1, Math.min(2.4, 2.4 - lib.length / 2500));
+  let out = "";
+  for (let y = 0; y <= years; y++) out += `<circle class="yr" cx="${cx}" cy="${cy}" r="${(rMin + y * band).toFixed(1)}"></circle>`;
+  lib.forEach((t, i) => {
+    const yi = t.at.getFullYear() - y0, a = angOf(t.at) * Math.PI / 180;
+    const r = rMin + band * (yi + 0.15 + 0.7 * jit(i, 1));
+    out += `<circle class="dot" cx="${(cx + r * Math.cos(a)).toFixed(1)}" cy="${(cy + r * Math.sin(a)).toFixed(1)}" r="${dotR}" opacity="${(0.45 + 0.4 * jit(i, 2)).toFixed(2)}"></circle>`;
+  });
+  const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  M.forEach((m, k) => { const a = ((k + 0.5) / 12 * 360 - 90) * Math.PI / 180, lr = rMax + 20; out += `<text x="${(cx + lr * Math.cos(a)).toFixed(1)}" y="${(cy + lr * Math.sin(a)).toFixed(1)}" text-anchor="middle" dominant-baseline="middle">${m}</text>`; });
+  const showEvery = years > 8 ? Math.ceil(years / 6) : 1;
+  for (let y = 0; y < years; y++) if (y === years - 1 || y % showEvery === 0) out += `<text class="y" x="${cx}" y="${(cy - rMin - band * (y + 0.5)).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="var(--paper)" stroke-width="4">${y0 + y}</text>`;
+
+  // month-by-year hit sectors
+  const counts = new Map();
+  lib.forEach(t => { const k = `${t.at.getFullYear()}-${t.at.getMonth()}`; const c = counts.get(k) || []; c.push(t); counts.set(k, c); });
+  const P = (r, a) => `${(cx + r * Math.cos(a)).toFixed(1)} ${(cy + r * Math.sin(a)).toFixed(1)}`;
+  for (const k of counts.keys()) {
+    const [yy, mm] = k.split("-").map(Number), yi = yy - y0;
+    const a0 = ((mm / 12) * 360 - 90) * Math.PI / 180, a1 = (((mm + 1) / 12) * 360 - 90) * Math.PI / 180;
+    const ri = rMin + band * yi, ro = ri + band;
+    out += `<path class="seg-hit" data-k="${k}" d="M ${P(ri, a0)} L ${P(ro, a0)} A ${ro} ${ro} 0 0 1 ${P(ro, a1)} L ${P(ri, a1)} A ${ri} ${ri} 0 0 0 ${P(ri, a0)} Z"></path>`;
+  }
+  svg.innerHTML = out;
+
+  const busiest = [...counts.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+  const label = k => { const [yy, mm] = k.split("-").map(Number); return new Date(yy, mm, 1).toLocaleDateString(undefined, { month: "long", year: "numeric" }); };
+  take.textContent = `${lib.length.toLocaleString()} songs saved since ${y0}. Your busiest month was ${label(busiest[0])}, with ${busiest[1].length}.`;
+  const showMonth = k => {
+    const list = counts.get(k) || [];
+    const by = new Map(); list.forEach(t => by.set(t.artist, (by.get(t.artist) || 0) + 1));
+    const tops = [...by.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+    $$(".seg-hit", svg).forEach(h => h.classList.toggle("on", h.dataset.k === k));
+    card.innerHTML = `<div class="nm">${label(k)}</div><div class="label muted cnt">${list.length} ${list.length === 1 ? "song" : "songs"} saved</div>
+      <ol>${tops.map(([a, n]) => `<li><span>${esc(a)}</span><span>${n}</span></li>`).join("")}</ol>`;
+  };
+  showMonth(busiest[0]);
+  $$(".seg-hit", svg).forEach(h => { h.addEventListener("mouseenter", () => showMonth(h.dataset.k)); h.addEventListener("click", () => showMonth(h.dataset.k)); });
+}
+
 function renderDiaryStatus() {
   const d = state.diary; const box = $("#diary-status"); if (!box) return;
   if (!d || !d.since) { box.innerHTML = `<div class="big">Your diary starts today.</div>Every time you open the app, your most recent plays are saved here. The clock and the week, month and year charts fill in as it grows.`; return; }
   const start = new Date(d.since), days = Math.max(0, Math.floor((Date.now() - start) / 86400000));
   const nice = start.toLocaleDateString(undefined, { day: "numeric", month: "long" });
   const weekReady = new Date(start.getTime() + 7 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "long" });
-  const pct = Math.min(100, Math.round(days / 7 * 100));
+  const pct = Math.min(100, Math.round(days / (days < 7 ? 7 : days < 30 ? 30 : 365) * 100));
   box.innerHTML = `<div class="big">${d.total.toLocaleString()} plays saved since ${nice}.</div>
-    ${days < 7 ? `The week view fills in on ${weekReady}. Until then, the top ten below uses Spotify's own windows.` : `The top ten below still uses Spotify's windows; your own week, month and year charts arrive next.`}
+    ${days < 7 ? `Your first full week is complete on ${weekReady}; the month and year views keep growing after that.` : days < 30 ? `Your first full month is complete on ${new Date(start.getTime() + 30 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "long" })}.` : `Open the app at least once a day so no plays slip past the 50 Spotify remembers.`}
     <div class="track" aria-hidden="true"><div style="width:${pct}%"></div></div>`;
 }
 
@@ -1220,6 +1463,10 @@ function renderTaste() {
 
 $$("#genre-range button").forEach(b => b.addEventListener("click", () => {
   taste.range = b.dataset.r; $$("#genre-range button").forEach(x => { x.classList.toggle("active", x === b); x.setAttribute("aria-selected", x === b); }); renderRecord();
+}));
+$$("#top-source button").forEach(b => b.addEventListener("click", () => {
+  taste.source = b.dataset.s; taste.userPickedSource = true;
+  $$("#top-source button").forEach(x => x.classList.toggle("active", x === b)); renderTopTen();
 }));
 $$("#top-kind button").forEach(b => b.addEventListener("click", () => {
   taste.kind = b.dataset.k; $$("#top-kind button").forEach(x => { x.classList.toggle("active", x === b); x.setAttribute("aria-selected", x === b); }); renderTopTen();
@@ -1254,6 +1501,7 @@ function renderHistory() {
    NAVIGATION AND BOOT
    ================================================================== */
 function switchView(name) {
+  if (name === "diary") setTimeout(openDiary, 0);
   $$(".view").forEach(v => v.classList.toggle("active", v.dataset.view === name));
   $$("nav li button[data-view]").forEach(b => b.classList.toggle("active", b.dataset.view === name));
   window.scrollTo({ top: 0 });
