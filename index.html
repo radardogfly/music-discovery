@@ -287,30 +287,7 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 .seg button.active { color: var(--ink); border-bottom-color: currentColor; }
 .mobile-only { display: none; margin-bottom: 20px; }
 
-.record-wrap { display: grid; grid-template-columns: minmax(260px, 440px) 1fr; gap: 48px; align-items: center; }
-.record { position: relative; margin: 0; aspect-ratio: 1; }
-.record svg { width: 100%; height: 100%; display: block; }
-.record .band { fill: none; stroke-linecap: butt; cursor: pointer; transition: opacity 300ms var(--ease), stroke-width 300ms var(--ease); }
-.record.has-focus .band:not(.on) { opacity: 0.35; }
-.record .groove { fill: none; stroke: var(--ink); stroke-opacity: 0.08; stroke-width: 1; }
-.record .label-disc { fill: var(--paper); stroke: var(--ink-faint); stroke-width: 1; }
-.record .spindle { fill: var(--ink); }
-.record-centre { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; pointer-events: none; padding: 0 22%; }
-.record-centre .big { font-family: var(--serif); font-size: clamp(28px, 4vw, 44px); line-height: 1; color: var(--ink); }
-.record-centre .nm { font-family: var(--serif); font-size: 18px; color: var(--ink); margin-top: 4px; line-height: 1.15; }
-.record-centre .who { font-size: 11px; color: var(--ink-muted); margin-top: 8px; line-height: 1.4; }
 
-.genre-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-width: 420px; }
-.genre-list li { display: grid; grid-template-columns: 12px 1fr auto; gap: 14px; align-items: baseline; cursor: pointer; padding: 4px 0; border-bottom: 1px solid transparent; }
-.genre-list li .sw { width: 12px; height: 12px; border-radius: 2px; align-self: center; }
-.genre-list li .g { font-family: var(--serif); font-size: 20px; }
-.genre-list li .pct { font-variant-numeric: tabular-nums; color: var(--ink-muted); font-size: 13px; }
-.genre-list li.on .g { text-decoration: underline; text-underline-offset: 5px; text-decoration-thickness: 1px; }
-.genre-list li.on .pct { color: var(--ink); }
-@media (max-width: 767px) {
-  .record-wrap { grid-template-columns: 1fr; gap: 28px; }
-  .genre-list li .g { font-size: 17px; }
-}
 
 .topten { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gutter); }
 .topcol .label { color: var(--ink-muted); display: block; margin-bottom: 16px; }
@@ -507,25 +484,6 @@ html { -webkit-tap-highlight-color: transparent; }
     </div>
 
     <div class="container section">
-      <div class="section-head">
-        <h2>Genres</h2>
-        <div class="seg" id="genre-range" role="tablist" aria-label="Time range">
-          <button data-r="short" role="tab">Four weeks</button>
-          <button data-r="medium" role="tab">Six months</button>
-          <button data-r="long" role="tab" class="active" aria-selected="true">All time</button>
-        </div>
-      </div>
-      <div class="record-wrap">
-        <figure class="record" aria-describedby="genre-list">
-          <svg id="record-svg" viewBox="0 0 400 400" role="img" aria-label="Share of listening by genre"></svg>
-          <div class="record-centre" id="record-centre"><span class="label muted">Hover a groove</span></div>
-        </figure>
-        <ol class="genre-list" id="genre-list"></ol>
-      </div>
-      <p class="muted" style="font-size:12px;margin-top:20px">Share of weighted listening across your top artists in this window. Hover or tap a band to see the artists behind it.</p>
-    </div>
-
-    <div class="container section" style="padding-top:0">
       <div class="section-head">
         <h2>Core, orbit, passing</h2>
       </div>
@@ -1157,51 +1115,6 @@ function genreShares(range) {
   return top;
 }
 
-function renderRecord() {
-  const data = genreShares(taste.range);
-  const svg = $("#record-svg"); const list = $("#genre-list"); const centre = $("#record-centre");
-  const fig = $(".record"); fig.classList.remove("has-focus"); taste.focus = null;
-  const cx = 200, cy = 200, rIn = 92, rOut = 188, ringW = rOut - rIn;
-  const fmt = v => (v * 100 < 1 ? "<1" : Math.round(v * 100)) + "%";
-  if (!data.length) { svg.innerHTML = ""; list.innerHTML = `<li><span></span><span class="g muted">No genre data in this window.</span><span></span></li>`; centre.innerHTML = ""; return; }
-
-  // the record: slices are drawn as thick arcs on one mid-radius, with a 2px surface gap between them
-  const rMid = (rIn + rOut) / 2;
-  const gapDeg = (2 / (2 * Math.PI * rMid)) * 360;
-  let ang = -90;
-  const arcs = data.map(d => {
-    const span = d.share * 360;
-    const a0 = ang + gapDeg / 2, a1 = ang + span - gapDeg / 2; ang += span;
-    if (a1 <= a0) return "";
-    const p = t => [cx + rMid * Math.cos(t * Math.PI / 180), cy + rMid * Math.sin(t * Math.PI / 180)];
-    const [x0, y0] = p(a0), [x1, y1] = p(a1);
-    const large = a1 - a0 > 180 ? 1 : 0;
-    const col = d.slot === "other" ? "var(--g-other)" : `var(--g${d.slot})`;
-    return `<path class="band" data-g="${esc(d.genre)}" d="M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${rMid} ${rMid} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}" stroke="${col}" stroke-width="${ringW}"></path>`;
-  }).join("");
-  // grooves: faint concentric lines over the bands so it reads as vinyl
-  const grooves = [0.18, 0.34, 0.5, 0.66, 0.82].map(f => `<circle class="groove" cx="${cx}" cy="${cy}" r="${(rIn + ringW * f).toFixed(1)}"></circle>`).join("");
-  svg.innerHTML = arcs + grooves + `<circle class="label-disc" cx="${cx}" cy="${cy}" r="${rIn - 4}"></circle>`;
-
-  list.innerHTML = data.map(d => `
-    <li data-g="${esc(d.genre)}"><span class="sw" style="background:${d.slot === "other" ? "var(--g-other)" : `var(--g${d.slot})`}"></span><span class="g">${esc(d.genre)}</span><span class="pct">${fmt(d.share)}</span></li>`).join("");
-
-  const idle = () => { centre.innerHTML = `<div><div class="big">${data.length - (data.some(d => d.slot === "other") ? 1 : 0)}</div><div class="who">genres in ${RANGE_LABEL[taste.range].toLowerCase()}</div></div>`; };
-  const focus = g => {
-    const d = data.find(x => x.genre === g); if (!d) return;
-    taste.focus = g; fig.classList.add("has-focus");
-    $$(".band", svg).forEach(b => b.classList.toggle("on", b.dataset.g === g));
-    $$("li", list).forEach(l => l.classList.toggle("on", l.dataset.g === g));
-    centre.innerHTML = `<div><div class="big">${fmt(d.share)}</div><div class="nm">${esc(d.genre)}</div>${d.artists.length ? `<div class="who">${d.artists.map(esc).join(", ")}</div>` : ""}</div>`;
-  };
-  const blur = () => { taste.focus = null; fig.classList.remove("has-focus"); $$(".band.on", svg).forEach(b => b.classList.remove("on")); $$("li.on", list).forEach(l => l.classList.remove("on")); idle(); };
-  idle();
-  [...$$(".band", svg), ...$$("li", list)].forEach(el => {
-    el.addEventListener("mouseenter", () => focus(el.dataset.g));
-    el.addEventListener("mouseleave", blur);
-    el.addEventListener("click", e => { e.stopPropagation(); taste.focus === el.dataset.g ? blur() : focus(el.dataset.g); });
-  });
-}
 
 /* Diary-based windows shaped like Spotify's lists, so the same renderer draws both. */
 const DIARY_LABEL = { short: "This week", medium: "This month", long: "This year" };
@@ -1506,7 +1419,7 @@ function renderDiaryStatus() {
 }
 
 function renderTaste() {
-  renderRecord(); renderOrbit(); renderTopTen(); renderDiaryStatus();
+  renderOrbit(); renderTopTen(); renderDiaryStatus();
   const recent = genreShares("short")[0], all = genreShares("long")[0];
   const sub = $("#taste-sub");
   if (recent && all) sub.textContent = recent.genre === all.genre
@@ -1514,9 +1427,6 @@ function renderTaste() {
     : `Mostly ${recent.genre} this month; ${all.genre} over the years.`;
 }
 
-$$("#genre-range button").forEach(b => b.addEventListener("click", () => {
-  taste.range = b.dataset.r; $$("#genre-range button").forEach(x => { x.classList.toggle("active", x === b); x.setAttribute("aria-selected", x === b); }); renderRecord();
-}));
 $$("#top-source button").forEach(b => b.addEventListener("click", () => {
   taste.source = b.dataset.s; taste.userPickedSource = true;
   $$("#top-source button").forEach(x => x.classList.toggle("active", x === b)); renderTopTen();
