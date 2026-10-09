@@ -11,6 +11,12 @@ database_id = "ec5a29ee-7ae1-49a8-b700-05349f8efd11"
 ALLOWED_ORIGIN = "https://radardogfly.github.io"
 CLAUDE_MODEL = "claude-sonnet-5-5"
 GENRE_MODEL = "claude-haiku-5-5"
+SPOTIFY_CLIENT_ID = "b55a1fcd707849d4937235a08fe48bf3"
+
+[triggers]
+crons = ["0 * * * *"]
 
 # Secrets (set with: npx wrangler secret put <NAME>)
-#   ANTHROPIC_API_KEY   the Claude API key; never commit it
+#   ANTHROPIC_API_KEY     the Claude API key
+#   UNSPLASH_ACCESS_KEY   Unsplash access key
+#   TOKEN_KEY             base64 of 32 random bytes; encrypts the Spotify refresh token at rest

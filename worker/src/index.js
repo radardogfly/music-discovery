@@ -1,22 +1,41 @@
 /**
  * Resonance API: Cloudflare Worker for music-discovery
  *
+ * Every route except /health and /link requires a device key (Authorization: Bearer <key>),
+ * issued once per browser at /link. The Worker holds the Spotify refresh token (encrypted)
+ * and is the only party that refreshes it, so browsers fetch access tokens from /token.
+ *
  * Routes
- *   POST /recommend   taste profile in, Claude-ranked artist candidates out
- *   POST /feedback    store a Keep/Pass verdict with tags
- *   POST /shown       log a batch that was rendered, to avoid repeats
- *   GET  /history     everything rated and shown, newest first
- *   GET  /health      liveness
+ *   POST /link            exchange a fresh Spotify refresh token for a device key
+ *   GET  /token           a current Spotify access token for a linked device
+ *   POST /unlink          forget the Spotify token and all device keys
+ *   POST /recommend       taste profile in, Claude-ranked artist candidates out
+ *   POST /feedback        store a Keep/Pass verdict with tags
+ *   POST /shown           add rendered artists to the shelf
+ *   GET  /shelf           the persistent unrated set
+ *   POST /shelf/clear     dismiss the whole shelf
+ *   GET  /history         everything rated and shown, newest first
+ *   POST /plays           copy recent plays into the diary
+ *   GET  /plays           the diary
+ *   POST /genres          Claude genre labels, cached per artist
+ *   GET  /photo           one Unsplash photograph for a slot
+ *   GET  /health          liveness
+ *
+ * Scheduled (hourly): refresh the Spotify token, pull recently played, append to the diary.
  *
  * Bindings
- *   env.DB                 D1 database (music-discovery-db)
- *   env.ANTHROPIC_API_KEY  secret
- *   env.ALLOWED_ORIGIN     the GitHub Pages origin, for CORS
- *   env.CLAUDE_MODEL       model id, defaults to claude-sonnet-5-5
+ *   env.DB                  D1 database (music-discovery-db)
+ *   env.ANTHROPIC_API_KEY   secret
+ *   env.UNSPLASH_ACCESS_KEY secret
+ *   env.TOKEN_KEY           secret, base64 32 bytes, encrypts the Spotify refresh token at rest
+ *   env.SPOTIFY_CLIENT_ID   public client id, used to refresh tokens
+ *   env.ALLOWED_ORIGIN      the GitHub Pages origin, for CORS
+ *   env.CLAUDE_MODEL        recommendation model;  env.GENRE_MODEL  labelling model
  */
 
 const MOODS = ["melancholic", "euphoric", "restless", "serene", "driving", "hazy"];
 const MAX_CANDIDATES = 24;
+const CLAUDE_CALLS_PER_HOUR = 40;
 
 export default {
   async fetch(request, env) {
@@ -29,19 +48,13 @@ export default {
     const url = new URL(request.url);
     try {
       if (request.method === "GET" && url.pathname === "/health") return json({ ok: true }, 200, cors);
-      if (request.method === "GET" && url.pathname === "/diag") return json(await diag(env), 200, cors);
-      if (request.method === "GET" && url.pathname === "/diag/genres") {
-        const test = [{ id: "diag-1", name: "Khalil Fong" }, { id: "diag-2", name: "Elephant Gym" }, { id: "diag-3", name: "Alice Coltrane" }, { id: "diag-4", name: "cero" }];
-        try { const r = await getGenres({ artists: test }, env); await env.DB.prepare("DELETE FROM artist_genres WHERE artist_id LIKE 'diag-%'").run(); return json({ ok: true, ...r }, 200, cors); }
-        catch (e) { return json({ ok: false, error: e.message }, 200, cors); }
-      }
-      if (request.method === "GET" && url.pathname === "/diag/recommend") {
-        const sample = { topGenres: [{ genre: "indie folk", weight: 1 }, { genre: "ambient", weight: 0.6 }, { genre: "jazz", weight: 0.4 }],
-          anchorArtists: ["Bon Iver", "Nils Frahm", "Alice Coltrane"], eraDistribution: { "2010s": 0.6, "1970s": 0.4 },
-          libraryArtistIds: [], libraryArtistNames: ["Bon Iver", "Nils Frahm", "Alice Coltrane"], trendSignal: {} };
-        try { const r = await recommend({ profile: sample, count: 8 }, env); return json({ ok: true, returned: r.candidates.length, sample: r.candidates.slice(0, 3) }, 200, cors); }
-        catch (e) { return json({ ok: false, status: e.status || 500, error: e.message }, 200, cors); }
-      }
+      if (request.method === "POST" && url.pathname === "/link") return json(await link(await request.json(), env), 200, cors);
+
+      const device = await requireDevice(request, env);
+      if (!device) return json({ error: "unauthorized" }, 401, cors);
+
+      if (request.method === "GET" && url.pathname === "/token") return json(await currentToken(env), 200, cors);
+      if (request.method === "POST" && url.pathname === "/unlink") return json(await unlink(env), 200, cors);
       if (request.method === "GET" && url.pathname === "/history") return json(await getHistory(env), 200, cors);
       if (request.method === "GET" && url.pathname === "/shelf") return json(await getShelf(env), 200, cors);
       if (request.method === "POST" && url.pathname === "/plays") return json(await savePlays(await request.json(), env), 200, cors);
@@ -57,6 +70,10 @@ export default {
       console.error(e);
       return json({ error: e.message || "internal error" }, e.status || 500, cors);
     }
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(syncPlays(env));
   },
 };
 
@@ -83,22 +100,112 @@ function bad(msg) { const e = new Error(msg); e.status = 400; return e; }
 const str = (v, max = 200) => (typeof v === "string" ? v.slice(0, max) : "");
 
 /* ------------------------------------------------------------------
-   /diag: configuration and upstream check, no user data involved
+   Device keys
    ------------------------------------------------------------------ */
-async function diag(env) {
-  const out = { hasKey: !!env.ANTHROPIC_API_KEY, hasDb: !!env.DB, model: env.CLAUDE_MODEL || "claude-sonnet-5-5", allowedOrigin: env.ALLOWED_ORIGIN || null };
-  try { const r = await env.DB.prepare("SELECT COUNT(*) AS n FROM feedback").first(); out.db = "ok, feedback rows: " + r.n; } catch (e) { out.db = "error: " + e.message; }
-  if (env.ANTHROPIC_API_KEY) {
-    try {
-      const r = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: out.model, max_tokens: 5, messages: [{ role: "user", content: "Say ok." }] }),
-      });
-      out.claude = r.ok ? "ok" : `error ${r.status}: ${(await r.text()).slice(0, 300)}`;
-    } catch (e) { out.claude = "fetch failed: " + e.message; }
+const b64 = u8 => btoa(String.fromCharCode(...u8));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function sha256(s) { return b64(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)))); }
+
+async function requireDevice(request, env) {
+  const h = request.headers.get("Authorization") || "";
+  const key = h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+  if (!key) return null;
+  const hash = await sha256(key);
+  const row = await env.DB.prepare("SELECT key_hash FROM devices WHERE key_hash = ?").bind(hash).first();
+  if (!row) return null;
+  env.DB.prepare("UPDATE devices SET last_seen = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE key_hash = ?").bind(hash).run().catch(() => {});
+  return hash;
+}
+
+/* ------------------------------------------------------------------
+   Spotify token store: refresh token encrypted at rest (AES-GCM, key = TOKEN_KEY)
+   ------------------------------------------------------------------ */
+async function aesKey(env) {
+  if (!env.TOKEN_KEY) { const e = new Error("TOKEN_KEY not configured"); e.status = 503; throw e; }
+  return crypto.subtle.importKey("raw", unb64(env.TOKEN_KEY), "AES-GCM", false, ["encrypt", "decrypt"]);
+}
+async function seal(env, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(env), new TextEncoder().encode(text)));
+  return b64(iv) + "." + b64(ct);
+}
+async function open(env, sealed) {
+  const [iv, ct] = sealed.split(".").map(unb64);
+  return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await aesKey(env), ct));
+}
+const getSetting = async (env, k) => (await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(k).first())?.value ?? null;
+const setSetting = (env, k, v) => env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at").bind(k, v).run();
+
+async function spotifyRefresh(env, refreshToken) {
+  if (!env.SPOTIFY_CLIENT_ID) throw new Error("SPOTIFY_CLIENT_ID not configured");
+  const r = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: env.SPOTIFY_CLIENT_ID }),
+  });
+  if (!r.ok) { const e = new Error(`Spotify refresh ${r.status}: ${(await r.text()).slice(0, 200)}`); e.status = 502; throw e; }
+  const t = await r.json();
+  // Spotify rotates refresh tokens for PKCE apps; keep whichever one is now valid
+  await setSetting(env, "spotify_refresh", await seal(env, t.refresh_token || refreshToken));
+  await setSetting(env, "spotify_access", JSON.stringify({ token: t.access_token, expires: Date.now() + (t.expires_in - 60) * 1000 }));
+  return { access_token: t.access_token, expires_in: t.expires_in };
+}
+
+async function currentToken(env) {
+  const cached = JSON.parse(await getSetting(env, "spotify_access") || "null");
+  if (cached && cached.expires - Date.now() > 120000) return { access_token: cached.token, expires_in: Math.floor((cached.expires - Date.now()) / 1000) };
+  const sealed = await getSetting(env, "spotify_refresh");
+  if (!sealed) { const e = new Error("not linked"); e.status = 409; throw e; }
+  return spotifyRefresh(env, await open(env, sealed));
+}
+
+async function link(body, env) {
+  const refresh = str(body.refresh_token, 600);
+  if (!refresh) throw bad("refresh_token required");
+  const tok = await spotifyRefresh(env, refresh);           // proves the token is real before issuing a key
+  const key = b64(crypto.getRandomValues(new Uint8Array(32))).replace(/[^A-Za-z0-9]/g, "").slice(0, 40);
+  await env.DB.prepare("INSERT INTO devices (key_hash, label) VALUES (?, ?)").bind(await sha256(key), str(body.label, 80) || null).run();
+  return { ok: true, device_key: key, access_token: tok.access_token, expires_in: tok.expires_in };
+}
+async function unlink(env) {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM settings WHERE key IN ('spotify_refresh','spotify_access')"),
+    env.DB.prepare("DELETE FROM devices"),
+  ]);
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------
+   Hourly sync: pull the last 50 plays into the diary without a browser
+   ------------------------------------------------------------------ */
+async function syncPlays(env) {
+  const sealed = await getSetting(env, "spotify_refresh");
+  if (!sealed) return;
+  try {
+    const { access_token } = await currentToken(env);
+    const r = await fetch("https://api.spotify.com/v1/me/player/recently-played?limit=50", { headers: { Authorization: "Bearer " + access_token } });
+    if (!r.ok) throw new Error("recently-played " + r.status);
+    const d = await r.json();
+    const items = (d.items || []).filter(i => i.track && i.played_at).map(i => ({
+      played_at: i.played_at, track_id: i.track.id, track_name: i.track.name,
+      artist_id: i.track.artists?.[0]?.id, artist_name: i.track.artists?.[0]?.name,
+      album_name: i.track.album?.name, release_date: i.track.album?.release_date,
+      duration_ms: i.track.duration_ms, image_url: i.track.album?.images?.[2]?.url || i.track.album?.images?.[0]?.url || "",
+    }));
+    const res = await savePlays({ items }, env);
+    await setSetting(env, "last_sync", JSON.stringify({ at: new Date().toISOString(), added: res.added, ok: true }));
+  } catch (e) {
+    console.error("sync", e);
+    await setSetting(env, "last_sync", JSON.stringify({ at: new Date().toISOString(), ok: false, error: String(e.message || e).slice(0, 200) }));
   }
-  return out;
+}
+
+/* ------------------------------------------------------------------
+   Claude call ceiling: a backstop against runaway spend
+   ------------------------------------------------------------------ */
+async function claudeBudget(env, kind) {
+  const { n } = await env.DB.prepare("SELECT COUNT(*) AS n FROM api_calls WHERE at > strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour')").first();
+  if (n >= CLAUDE_CALLS_PER_HOUR) { const e = new Error("hourly Claude call limit reached; try again later"); e.status = 429; throw e; }
+  await env.DB.prepare("INSERT INTO api_calls (kind) VALUES (?)").bind(kind).run();
 }
 
 /* ------------------------------------------------------------------
@@ -202,7 +309,9 @@ async function getPlays(url, env) {
   const { results } = await env.DB.prepare(`SELECT played_at, track_id, track_name, artist_id, artist_name, album_name, release_date, duration_ms, image_url
     FROM plays WHERE played_at >= ? ORDER BY played_at DESC LIMIT 20000`).bind(since).all();
   const meta = await env.DB.prepare("SELECT MIN(played_at) AS first, COUNT(*) AS total FROM plays").first();
-  return { items: results, total: meta.total, since: meta.first };
+  const linked = !!(await getSetting(env, "spotify_refresh"));
+  const lastSync = JSON.parse(await getSetting(env, "last_sync") || "null");
+  return { items: results, total: meta.total, since: meta.first, linked, lastSync };
 }
 
 /* ------------------------------------------------------------------
@@ -244,6 +353,7 @@ async function getGenres(body, env) {
 }
 
 async function labelGenres(batch, vocab, env) {
+  await claudeBudget(env, "genres");
   const list = batch.map((a, i) => `${i + 1}. ${a.name}`).join("\n");
   const prompt = `Assign music genres to each artist below.
 
@@ -398,6 +508,7 @@ RULES
 
 async function askClaude(prompt, count, env) {
   if (!env.ANTHROPIC_API_KEY) { const e = new Error("ANTHROPIC_API_KEY not configured"); e.status = 500; throw e; }
+  await claudeBudget(env, "recommend");
   const tool = {
     name: "recommend_artists",
     description: "Return the recommended artists for this listener.",

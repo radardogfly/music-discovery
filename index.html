@@ -260,6 +260,8 @@ nav .signout { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercas
 }
 .chip.tag { color: var(--ink); cursor: pointer; transition: background 300ms, color 300ms; }
 .chip.tag.on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.player { margin-top: 18px; border-radius: 12px; overflow: hidden; background: var(--ink-faint); min-height: 152px; }
+.player iframe { display: block; }
 .detail .row { display: flex; gap: 24px; align-items: center; margin-top: 20px; flex-wrap: wrap; }
 .detail .spotify { font-size: 13px; border-bottom: 1px solid currentColor; padding-bottom: 2px; }
 .fb { display: flex; gap: 24px; }
@@ -717,11 +719,39 @@ const Auth = {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
     });
     if (!r.ok) { const t = await r.text().catch(() => ""); throw new Error(`Token exchange failed (${r.status}): ${t.slice(0, 160)}`); }
-    Auth.save(await r.json());
+    const t = await r.json();
     history.replaceState({}, "", CONFIG.REDIRECT_URI);
+    await Auth.link(t);
     return true;
   },
+  /* Hand the refresh token to the Worker, which becomes its only holder, and keep a device key instead. */
+  async link(t) {
+    try {
+      const r = await fetch(CONFIG.API_BASE + "/link", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: t.refresh_token, label: navigator.userAgent.slice(0, 80) }) });
+      if (r.ok) {
+        const d = await r.json();
+        localStorage.setItem("device_key", d.device_key);
+        localStorage.removeItem("sp_refresh");
+        Auth.save({ access_token: d.access_token, expires_in: d.expires_in });
+        return true;
+      }
+      const err = await r.json().catch(() => ({}));
+      console.warn("link refused", err);
+    } catch (e) { console.warn("link failed", e); }
+    // Worker not ready for linking (for example TOKEN_KEY not set yet): keep the token in the browser for now
+    Auth.save(t);
+    return false;
+  },
   async refresh() {
+    const key = localStorage.getItem("device_key");
+    if (key) {
+      const r = await fetch(CONFIG.API_BASE + "/token", { headers: { Authorization: "Bearer " + key } });
+      if (r.ok) { Auth.save(await r.json()); return true; }
+      if (r.status === 401 || r.status === 409) { Auth.clear(); return false; }
+      return false;
+    }
+    // legacy path: a refresh token still held in this browser from before linking existed
     const refresh_token = localStorage.getItem("sp_refresh");
     if (!refresh_token) return false;
     const body = new URLSearchParams({ client_id: CONFIG.SPOTIFY_CLIENT_ID, grant_type: "refresh_token", refresh_token });
@@ -729,7 +759,8 @@ const Auth = {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
     });
     if (!r.ok) { Auth.clear(); return false; }
-    Auth.save(await r.json());
+    const t = await r.json();
+    await Auth.link(t);            // migrate to a device key on first opportunity
     return true;
   },
   save(t) {
@@ -740,10 +771,15 @@ const Auth = {
   },
   async ensure() {
     const exp = Number(localStorage.getItem("sp_expires") || 0);
-    if (localStorage.getItem("sp_access") && Date.now() < exp) { state.token = localStorage.getItem("sp_access"); return true; }
+    if (localStorage.getItem("sp_access") && Date.now() < exp) {
+      state.token = localStorage.getItem("sp_access");
+      if (!localStorage.getItem("device_key") && localStorage.getItem("sp_refresh")) Auth.refresh().catch(() => {});
+      return true;
+    }
     return Auth.refresh();
   },
-  clear() { ["sp_access","sp_expires","sp_refresh"].forEach(k => localStorage.removeItem(k)); state.token = null; },
+  deviceKey() { return localStorage.getItem("device_key") || ""; },
+  clear() { ["sp_access","sp_expires","sp_refresh","device_key"].forEach(k => localStorage.removeItem(k)); state.token = null; },
   random(n) {
     const a = new Uint8Array(n); crypto.getRandomValues(a);
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
@@ -896,13 +932,14 @@ function buildProfile() {
    WORKER API
    ================================================================== */
 const Api = {
+  headers(extra = {}) { const k = Auth.deviceKey(); return k ? { Authorization: "Bearer " + k, ...extra } : extra; },
   async post(path, body) {
-    const r = await fetch(CONFIG.API_BASE + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(CONFIG.API_BASE + path, { method: "POST", headers: Api.headers({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
     if (!r.ok) throw new Error(`API ${r.status} on ${path}: ${(await r.text().catch(() => "")).slice(0, 200)}`);
     return r.json();
   },
   async get(path) {
-    const r = await fetch(CONFIG.API_BASE + path);
+    const r = await fetch(CONFIG.API_BASE + path, { headers: Api.headers() });
     if (!r.ok) throw new Error(`API ${r.status} on ${path}`);
     return r.json();
   },
@@ -1034,6 +1071,7 @@ function renderDiscover() {
       <div class="detail">
         <p>${esc(r.reason)}</p>
         <div class="chips">${r.genres.map(g => `<span class="chip">${esc(g)}</span>`).join("")}</div>
+        ${r.spotify_id ? `<div class="player" data-id="${esc(r.spotify_id)}"></div>` : ""}
         <div class="row">
           <div class="fb">
             <button data-v="up" class="${r.verdict === "up" ? "on" : ""}">Keep</button>
@@ -1043,7 +1081,13 @@ function renderDiscover() {
         </div>
         <div class="tags"><div class="chips"></div><button class="done">Done</button></div>
       </div>`;
-    $(".photo", el).addEventListener("click", () => el.classList.toggle("open"));
+    $(".photo", el).addEventListener("click", () => {
+      el.classList.toggle("open");
+      const pl = $(".player", el);
+      if (el.classList.contains("open") && pl && !pl.firstChild) {
+        pl.innerHTML = `<iframe title="${esc(r.name)} on Spotify" src="https://open.spotify.com/embed/artist/${esc(pl.dataset.id)}?utm_source=generator&theme=0" width="100%" height="152" frameborder="0" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" loading="lazy"></iframe>`;
+      }
+    });
     $$(".fb button", el).forEach(b => b.addEventListener("click", () => chooseVerdict(el, r, b.dataset.v)));
     $(".done", el).addEventListener("click", () => commitFeedback(el, r));
     grid.appendChild(el);
@@ -1310,6 +1354,7 @@ async function openDiary() {
     try {
       const r = await Api.get("/plays");
       diary.plays = r.items || []; diary.total = r.total || 0; diary.since = r.since; diary.loaded = true;
+      diary.linked = !!r.linked; diary.lastSync = r.lastSync || null;
       state.diary = { total: diary.total, since: diary.since };
       if (!taste.userPickedSource) taste.source = diary.total >= 30 ? "diary" : "spotify";
       $$("#top-source button").forEach(b => b.classList.toggle("active", b.dataset.s === taste.source));
@@ -1448,7 +1493,8 @@ function renderDiaryStatus() {
   const weekReady = new Date(start.getTime() + 7 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "long" });
   const pct = Math.min(100, Math.round(days / (days < 7 ? 7 : days < 30 ? 30 : 365) * 100));
   box.innerHTML = `<div class="big">${d.total.toLocaleString()} plays saved since ${nice}.</div>
-    ${days < 7 ? `Your first full week is complete on ${weekReady}; the month and year views keep growing after that.` : days < 30 ? `Your first full month is complete on ${new Date(start.getTime() + 30 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "long" })}.` : `Open the app at least once a day so no plays slip past the 50 Spotify remembers.`}
+    ${days < 7 ? `Your first full week is complete on ${weekReady}; the month and year views keep growing after that.` : days < 30 ? `Your first full month is complete on ${new Date(start.getTime() + 30 * 86400000).toLocaleDateString(undefined, { day: "numeric", month: "long" })}.` : ``}
+    ${diary.linked ? ` Plays are collected every hour, whether or not the app is open${diary.lastSync?.at ? ` (last check ${new Date(diary.lastSync.at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}${diary.lastSync.ok === false ? ", which failed" : ""})` : ""}.` : ` Plays are collected whenever you open the app.`}
     <div class="track" aria-hidden="true"><div style="width:${pct}%"></div></div>`;
 }
 
@@ -1518,7 +1564,10 @@ window.addEventListener("scroll", updateNav, { passive: true });
 $$("nav li button[data-view]").forEach(b => b.addEventListener("click", () => switchView(b.dataset.view)));
 $("#refresh").addEventListener("click", replaceAll);
 $("#connect").addEventListener("click", e => { e.preventDefault(); Auth.login(); });
-$("#signout").addEventListener("click", () => { Auth.clear(); location.reload(); });
+$("#signout").addEventListener("click", async () => {
+  if (Auth.deviceKey()) { try { await Api.post("/unlink", {}); } catch {} }
+  Auth.clear(); location.reload();
+});
 $$("#filters button").forEach(b => b.addEventListener("click", () => {
   state.filter = b.dataset.f; $$("#filters button").forEach(x => x.classList.toggle("active", x === b)); renderHistory();
 }));
