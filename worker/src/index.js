@@ -38,7 +38,7 @@ const MAX_CANDIDATES = 24;
 const CLAUDE_CALLS_PER_HOUR = 40;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get("Origin") || "";
     const cors = corsHeaders(origin, env);
 
@@ -62,7 +62,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/genres") return json(await getGenres(await request.json(), env), 200, cors);
       if (request.method === "GET" && url.pathname === "/photo") return json(await getPhoto(url.searchParams.get("slot") || "serene", env), 200, cors);
       if (request.method === "POST" && url.pathname === "/shelf/clear") return json(await clearShelf(env), 200, cors);
-      if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
+      if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env, ctx), 200, cors);
       if (request.method === "POST" && url.pathname === "/feedback") return json(await saveFeedback(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/shown") return json(await logShown(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/log") { const b = await request.json(); await setSetting(env, "last_client", JSON.stringify({ at: new Date().toISOString(), ...b }).slice(0, 2000)); return json({ ok: true }, 200, cors); }
@@ -428,10 +428,70 @@ async function logRecommend(env, info) {
   try { await setSetting(env, "last_recommend", JSON.stringify({ at: new Date().toISOString(), ...info })); } catch {}
 }
 
-async function recommend(body, env) {
+/* Recommendations survive the browser leaving: generation runs under ctx.waitUntil and its result is
+   cached in settings.candidate_cache. A request first serves from the cache; if a generation is already
+   running it waits for that one instead of starting another. */
+const CACHE_TTL_MS = 6 * 3600 * 1000;
+async function recommend(body, env, ctx) {
   const p = body.profile;
   if (!p || !Array.isArray(p.topGenres)) throw bad("profile required");
   const count = Math.min(MAX_CANDIDATES, Math.max(8, Number(body.count) || 16));
+
+  const exclude = await exclusionSet(env, p);
+  const fromCache = async () => {
+    const c = JSON.parse(await getSetting(env, "candidate_cache") || "null");
+    if (!c || Date.now() - c.at > CACHE_TTL_MS) return [];
+    return (c.candidates || []).filter(x => !exclude.has(x.name.toLowerCase()));
+  };
+
+  let ready = await fromCache();
+  if (ready.length >= Math.min(count, 6)) return serve(env, ready, count, "cache");
+
+  const running = JSON.parse(await getSetting(env, "generating") || "null");
+  if (!running || Date.now() - running.at > 150000) {
+    await setSetting(env, "generating", JSON.stringify({ at: Date.now() }));
+    const job = generate(body, env, count).catch(e => logRecommend(env, { error: String(e.message || e).slice(0, 300) }))
+      .finally(() => env.DB.prepare("DELETE FROM settings WHERE key = 'generating'").run().catch(() => {}));
+    if (ctx?.waitUntil) ctx.waitUntil(job);
+  }
+  // wait for the running generation (ours or one started by an earlier, abandoned request)
+  for (let i = 0; i < 70; i++) {
+    await new Promise(r => setTimeout(r, 2000));
+    ready = await fromCache();
+    const still = await getSetting(env, "generating");
+    if (ready.length >= Math.min(count, 6) || (!still && i > 0)) break;
+  }
+  if (!ready.length) {
+    const last = JSON.parse(await getSetting(env, "last_recommend") || "{}");
+    const e = new Error(last.error || "recommendations are still being prepared; try again in a minute"); e.status = 503; throw e;
+  }
+  return serve(env, ready, count, "fresh");
+}
+
+// Hand out up to `count` candidates and remove them from the cache so they are not served twice.
+async function serve(env, ready, count, source) {
+  const give = ready.slice(0, count);
+  const c = JSON.parse(await getSetting(env, "candidate_cache") || "null");
+  if (c) {
+    const used = new Set(give.map(x => x.name.toLowerCase()));
+    c.candidates = (c.candidates || []).filter(x => !used.has(x.name.toLowerCase()));
+    await setSetting(env, "candidate_cache", JSON.stringify(c));
+  }
+  return { candidates: give, source, model: "cached" };
+}
+
+async function exclusionSet(env, p) {
+  const { results: fb } = await env.DB.prepare("SELECT artist_name FROM feedback").all();
+  const { results: shown } = await env.DB.prepare("SELECT DISTINCT artist_name FROM recommendation_log").all();
+  return new Set([
+    ...(p.libraryArtistNames || []).map(n => String(n).toLowerCase()),
+    ...fb.map(r => r.artist_name.toLowerCase()),
+    ...shown.map(r => r.artist_name.toLowerCase()),
+  ]);
+}
+
+async function generate(body, env, count) {
+  const p = body.profile;
 
   // Feedback memory: what was kept, what was passed and why, what was already shown
   const { results: fb } = await env.DB.prepare(`
@@ -473,7 +533,11 @@ async function recommend(body, env) {
   }
   await logRecommend(env, { requested: count, asked: ask, fromClaude: candidates.length, afterExclusion: out.length,
     excludedSample: candidates.filter(c => exclude.has(c.name.toLowerCase())).slice(0, 8).map(c => c.name) });
-  return { candidates: out, model: env.CLAUDE_MODEL || "claude-sonnet-5-5" };
+  const prev = JSON.parse(await getSetting(env, "candidate_cache") || "null");
+  const keep = prev && Date.now() - prev.at < CACHE_TTL_MS ? (prev.candidates || []) : [];
+  const names = new Set(out.map(x => x.name.toLowerCase()));
+  await setSetting(env, "candidate_cache", JSON.stringify({ at: Date.now(), candidates: [...out, ...keep.filter(x => !names.has(x.name.toLowerCase()))].slice(0, 40) }));
+  return out;
 }
 
 function buildPrompt(p, ctx) {

@@ -964,6 +964,20 @@ async function loadShelf() {
 async function topUpShelf() {
   const need = CONFIG.BATCH - state.recs.filter(r => !r.verdict).length;
   if (need <= 0) return;
+  setFinding(true, need);
+  try { await topUpInner(need); } finally { setFinding(false); }
+}
+function setFinding(on, need) {
+  const box = $("#empty");
+  if (on) {
+    box.innerHTML = `<p class="muted">Finding ${need === CONFIG.BATCH ? "twelve artists" : need === 1 ? "one more artist" : need + " more artists"} for you. This takes about half a minute, and carries on even if you leave the page.</p>`;
+    show(box, true);
+  } else {
+    box.innerHTML = `<p class="muted">Nothing yet.</p>`;
+    show(box, state.recs.length === 0);
+  }
+}
+async function topUpInner(need) {
   let fresh = await fetchNew(need);
   if (fresh.length < need) {                       // one more attempt for whatever is still missing
     const before = state.recs; state.recs = [...state.recs, ...fresh];
