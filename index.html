@@ -963,7 +963,12 @@ async function loadShelf() {
 async function topUpShelf() {
   const need = CONFIG.BATCH - state.recs.filter(r => !r.verdict).length;
   if (need <= 0) return;
-  const fresh = await fetchNew(need);
+  let fresh = await fetchNew(need);
+  if (fresh.length < need) {                       // one more attempt for whatever is still missing
+    const before = state.recs; state.recs = [...state.recs, ...fresh];
+    try { fresh = [...fresh, ...(await fetchNew(need - fresh.length))]; } finally { state.recs = before; }
+  }
+  Api.post("/log", { need, got: fresh.length, stats: state.lastFetchStats }).catch(() => {});
   if (!fresh.length) return;
   state.recs = [...state.recs.filter(r => !r.verdict), ...fresh];
   Api.logShown(fresh.map(r => ({ artist_name: r.name, spotify_id: r.spotify_id, reason: r.reason, mood: r.mood, image_url: r.image, spotify_url: r.url, genres: r.genres }))).catch(() => {});
@@ -971,7 +976,9 @@ async function topUpShelf() {
 }
 
 async function fetchNew(need) {
-  const { candidates } = await Api.recommend(state.profile, Math.max(8, need + 4));
+  const { candidates } = await Api.recommend(state.profile, Math.max(8, need + 6));
+  const stats = { fromWorker: candidates.length, rejected: 0, library: 0, onShelf: 0, notFound: 0, searchError: 0 };
+  state.lastFetchStats = stats;
   const rejected = new Set(state.history.filter(h => h.verdict === "down").map(h => h.artist_name.toLowerCase()));
   const libNames = new Set(state.profile.libraryArtistNames.map(n => n.toLowerCase()));
   const onShelf = new Set(state.recs.map(r => r.name.toLowerCase()));
@@ -980,12 +987,16 @@ async function fetchNew(need) {
   for (const c of candidates) {
     if (resolved.length >= need) break;
     const key = c.name.toLowerCase();
-    if (seen.has(key) || rejected.has(key) || libNames.has(key) || onShelf.has(key)) continue;
+    if (seen.has(key)) continue;
+    if (rejected.has(key)) { stats.rejected++; continue; }
+    if (libNames.has(key)) { stats.library++; continue; }
+    if (onShelf.has(key)) { stats.onShelf++; continue; }
     seen.add(key);
     let a = null;
-    try { a = await Spotify.searchArtist(c.name); } catch { a = null; }
-    if (!a || state.profile.libraryArtistIds.includes(a.id)) continue;
-    if (onShelf.has(a.name.toLowerCase())) continue;
+    try { a = await Spotify.searchArtist(c.name); } catch (e) { stats.searchError++; stats.lastSearchError = String(e.message || e).slice(0, 120); a = null; }
+    if (!a) { stats.notFound++; continue; }
+    if (state.profile.libraryArtistIds.includes(a.id)) { stats.library++; continue; }
+    if (onShelf.has(a.name.toLowerCase())) { stats.onShelf++; continue; }
     resolved.push({
       name: a.name, spotify_id: a.id, url: a.external_urls?.spotify || "", image: a.images?.[0]?.url || "",
       genres: (a.genres || []).slice(0, 3), reason: c.reason, mood: MOODS.includes(c.mood) ? c.mood : "serene",

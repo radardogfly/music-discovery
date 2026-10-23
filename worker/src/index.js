@@ -65,6 +65,7 @@ export default {
       if (request.method === "POST" && url.pathname === "/recommend") return json(await recommend(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/feedback") return json(await saveFeedback(await request.json(), env), 200, cors);
       if (request.method === "POST" && url.pathname === "/shown") return json(await logShown(await request.json(), env), 200, cors);
+      if (request.method === "POST" && url.pathname === "/log") { const b = await request.json(); await setSetting(env, "last_client", JSON.stringify({ at: new Date().toISOString(), ...b }).slice(0, 2000)); return json({ ok: true }, 200, cors); }
       return json({ error: "not found" }, 404, cors);
     } catch (e) {
       console.error(e);
@@ -423,6 +424,10 @@ async function getHistory(env) {
 /* ------------------------------------------------------------------
    /recommend
    ------------------------------------------------------------------ */
+async function logRecommend(env, info) {
+  try { await setSetting(env, "last_recommend", JSON.stringify({ at: new Date().toISOString(), ...info })); } catch {}
+}
+
 async function recommend(body, env) {
   const p = body.profile;
   if (!p || !Array.isArray(p.topGenres)) throw bad("profile required");
@@ -450,8 +455,11 @@ async function recommend(body, env) {
     ...shownRows.map(r => r.artist_name.toLowerCase()),
   ]);
 
-  const prompt = buildPrompt(p, { kept, passed, tagCounts, shownRows, count });
-  const candidates = await askClaude(prompt, count, env);
+  const ask = Math.min(30, count + 10);   // over-fetch: many candidates are removed as repeats or library matches
+  const prompt = buildPrompt(p, { kept, passed, tagCounts, shownRows, count: ask });
+  let candidates = [];
+  try { candidates = await askClaude(prompt, ask, env); }
+  catch (e) { await logRecommend(env, { requested: count, asked: ask, error: String(e.message || e).slice(0, 300) }); throw e; }
 
   // Final server-side guard against repeats, then trim
   const seen = new Set();
@@ -462,6 +470,8 @@ async function recommend(body, env) {
     seen.add(key);
     out.push({ name: c.name, reason: c.reason, mood: MOODS.includes(c.mood) ? c.mood : "serene", confidence: c.confidence ?? 0.5 });
   }
+  await logRecommend(env, { requested: count, asked: ask, fromClaude: candidates.length, afterExclusion: out.length,
+    excludedSample: candidates.filter(c => exclude.has(c.name.toLowerCase())).slice(0, 8).map(c => c.name) });
   return { candidates: out, model: env.CLAUDE_MODEL || "claude-sonnet-5-5" };
 }
 
@@ -494,8 +504,11 @@ ${list(ctx.passed.slice(0, 40), r => `- ${r.artist_name}${r.tags ? ` [${r.tags}]
 
 Rejection pattern (tag counts): ${rejectionPattern}
 
+Already shown to this listener before (never suggest any of these again):
+${ctx.shownRows.length ? ctx.shownRows.slice(0, 200).map(r => r.artist_name).join(", ") : "(none yet)"}
+
 RULES
-1. Return exactly ${ctx.count} artists the listener almost certainly does not know. Never return anchor artists, kept artists, passed artists, or anything in the listener's library.
+1. Return exactly ${ctx.count} artists the listener almost certainly does not know. Never return anchor artists, kept artists, passed artists, already-shown artists, or anything in the listener's library.
 2. Avoid the obvious adjacent names everyone lists next to the anchors. Favor artists one or two steps removed: a scene the anchors came from, a producer's other project, a regional parallel, an earlier generation that the anchors drew from, or a current artist carrying the same sensibility into a different form.
 3. Treat the rejection pattern as hard constraints. If "too mainstream" dominates, go deeper and more obscure. If "wrong energy" dominates, match the anchors' intensity more carefully. If "not my era" dominates, stay inside the era distribution.
 4. Treat kept artists as the strongest positive signal; find more in their direction, but do not cluster all picks around one of them.
