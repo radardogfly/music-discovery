@@ -456,7 +456,7 @@ async function recommend(body, env) {
   ]);
 
   await logRecommend(env, { stage: "started", requested: count });
-  const ask = Math.min(30, count + 10);   // over-fetch: many candidates are removed as repeats or library matches
+  const ask = Math.min(24, count + 6);   // over-fetch: many candidates are removed as repeats or library matches
   const prompt = buildPrompt(p, { kept, passed, tagCounts, shownRows, count: ask });
   let candidates = [];
   try { candidates = await askClaude(prompt, ask, env); }
@@ -523,44 +523,20 @@ RULES
 async function askClaude(prompt, count, env) {
   if (!env.ANTHROPIC_API_KEY) { const e = new Error("ANTHROPIC_API_KEY not configured"); e.status = 500; throw e; }
   await claudeBudget(env, "recommend");
-  const tool = {
-    name: "recommend_artists",
-    description: "Return the recommended artists for this listener.",
-    input_schema: {
-      type: "object",
-      properties: {
-        artists: {
-          type: "array", minItems: count, maxItems: count,
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-              reason: { type: "string" },
-              mood: { type: "string", enum: MOODS },
-              confidence: { type: "number", minimum: 0, maximum: 1 },
-            },
-            required: ["name", "reason", "mood", "confidence"],
-          },
-        },
-      },
-      required: ["artists"],
-    },
-  };
+  // Plain JSON Lines: one artist per line. Robust to truncation: every complete line is usable.
+  const format = `
 
+OUTPUT FORMAT
+Write exactly ${count} lines and nothing else: no heading, no commentary, no code fence.
+Each line is one compact JSON object:
+{"name":"Artist Name","reason":"One specific sentence, at most 25 words.","mood":"one of ${MOODS.join("|")}","confidence":0.7}`;
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": env.ANTHROPIC_API_KEY,
-      "anthropic-version": "2023-06-01",
-    },
+    headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: env.CLAUDE_MODEL || "claude-sonnet-5-5",
-      max_tokens: 4000,
-      tools: [tool],
-      tool_choice: { type: "auto" },
-      system: "You must respond by calling the recommend_artists tool exactly once with the full list. Do not answer in prose.",
-      messages: [{ role: "user", content: prompt }],
+      max_tokens: 8000,
+      messages: [{ role: "user", content: prompt + format }],
     }),
   });
   if (!r.ok) {
@@ -568,15 +544,27 @@ async function askClaude(prompt, count, env) {
     const e = new Error(`Claude API ${r.status}: ${text.slice(0, 300)}`); e.status = 502; throw e;
   }
   const data = await r.json();
-  const block = (data.content || []).find(b => b.type === "tool_use" && b.name === "recommend_artists");
-  let artists = block?.input?.artists;
-  if (!Array.isArray(artists)) {
-    // Fallback: the model answered in text; pull the first JSON object or array out of it
-    const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
-    const m = text.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-    try { const parsed = m ? JSON.parse(m[0]) : null; artists = Array.isArray(parsed) ? parsed : parsed?.artists; } catch { artists = null; }
+  const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
+  const artists = parseArtistLines(text);
+  if (!artists.length) {
+    const e = new Error(`Claude returned no usable artists (stop_reason ${data.stop_reason}; starts: ${text.slice(0, 160).replace(/\s+/g, " ")})`);
+    e.status = 502; throw e;
   }
-  if (!Array.isArray(artists)) { const e = new Error("Claude returned no structured output"); e.status = 502; throw e; }
-  return artists.map(a => ({ name: str(a.name, 120).trim(), reason: str(a.reason, 400).trim(), mood: a.mood, confidence: Number(a.confidence) }))
-                .filter(a => a.name);
+  return artists;
+}
+
+// Accepts JSON Lines, a JSON array, or an {"artists": [...]} object, with or without code fences.
+// Any complete object is kept even if the reply was cut off mid-way.
+function parseArtistLines(text) {
+  const out = [];
+  const take = o => { if (o && typeof o.name === "string" && o.name.trim()) out.push({ name: str(o.name, 120).trim(), reason: str(o.reason, 400).trim(), mood: o.mood, confidence: Number(o.confidence) }); };
+  const clean = text.replace(/```(?:json)?/gi, "");
+  try {
+    const whole = JSON.parse(clean.trim());
+    (Array.isArray(whole) ? whole : Array.isArray(whole?.artists) ? whole.artists : []).forEach(take);
+    if (out.length) return out;
+  } catch {}
+  const objs = clean.match(/\{[^{}]*"name"\s*:[^{}]*\}/g) || [];
+  objs.forEach(m => { try { take(JSON.parse(m)); } catch {} });
+  return out;
 }
