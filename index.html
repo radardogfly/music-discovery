@@ -955,6 +955,7 @@ async function loadShelf() {
     renderDiscover();
     await topUpShelf();
   } catch (e) {
+    Api.post("/log", { error: String(e && e.message || e).slice(0, 600), stats: state.lastFetchStats || null }).catch(() => {});
     console.error(e); notice("Recommendation error: " + (e && e.message ? e.message : "unknown"), 15000);
     renderDiscover();
   } finally { setLoading(false); }

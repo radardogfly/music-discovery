@@ -455,6 +455,7 @@ async function recommend(body, env) {
     ...shownRows.map(r => r.artist_name.toLowerCase()),
   ]);
 
+  await logRecommend(env, { stage: "started", requested: count });
   const ask = Math.min(30, count + 10);   // over-fetch: many candidates are removed as repeats or library matches
   const prompt = buildPrompt(p, { kept, passed, tagCounts, shownRows, count: ask });
   let candidates = [];
