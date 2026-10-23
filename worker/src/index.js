@@ -372,7 +372,7 @@ Respond with only a JSON object mapping each number to its array of genres, for 
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: env.GENRE_MODEL || "claude-haiku-5-5", max_tokens: 3000, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: env.GENRE_MODEL || "claude-haiku-5-5", max_tokens: 6000, thinking: { type: "disabled" }, output_config: { effort: "low" }, messages: [{ role: "user", content: prompt }] }),
   });
   if (!r.ok) throw new Error(`Claude API ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = await r.json();
@@ -599,7 +599,11 @@ Each line is one compact JSON object:
     headers: { "Content-Type": "application/json", "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
     body: JSON.stringify({
       model: env.CLAUDE_MODEL || "claude-sonnet-5-5",
-      max_tokens: 8000,
+      max_tokens: 12000,
+      // The newer models think before answering and that thinking counts against max_tokens. Left at the
+      // default, the whole allowance was being spent on thinking and the reply came back empty.
+      thinking: { type: "between_tools" },
+      output_config: { effort: "low" },
       messages: [{ role: "user", content: prompt + format }],
     }),
   });
@@ -610,6 +614,7 @@ Each line is one compact JSON object:
   const data = await r.json();
   const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("\n");
   const artists = parseArtistLines(text);
+  await logRecommend(env, { stage: "claude_replied", stop: data.stop_reason, outputTokens: data.usage?.output_tokens, thinkingTokens: data.usage?.output_tokens_details?.thinking_tokens, parsed: artists.length });
   if (!artists.length) {
     const e = new Error(`Claude returned no usable artists (stop_reason ${data.stop_reason}; starts: ${text.slice(0, 160).replace(/\s+/g, " ")})`);
     e.status = 502; throw e;
